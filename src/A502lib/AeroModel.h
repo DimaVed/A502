@@ -20,13 +20,16 @@
 // printout options, ...) and the simple grid networks ($points sections) are
 // extracted into typed members as a convenience.
 //
-// Only the C++ standard library is used; no Boost / external dependency is
-// required by this translation unit.
+// Only the C++ standard library and Eigen (for geometry vectors) are used; no
+// Boost / other external dependency is required by this translation unit.
+#define EIGEN_NO_DEBUG           // Eigen full speed for the solver prototype
 
 #include <ostream>
 #include <string>
 #include <vector>
 #include <cstddef>
+
+#include <Eigen/Dense>
 
 namespace a502 {
 
@@ -81,6 +84,18 @@ struct ReferenceData {
     double sref{0.0}, bref{0.0}, cref{0.0}, dref{0.0};
 };
 
+// One panel resulting from solve().  It carries the geometric data a
+// higher-order panel method needs (centroid, oriented unit normal, area) plus
+// a placeholder surface pressure coefficient (cp) so the result can be shaded
+// in a visualizer.  Vectors are stored as Eigen::Vector3d.
+struct Panel {
+    Eigen::Vector3d center;  // panel centroid
+    Eigen::Vector3d normal;  // oriented unit normal
+    double          area{0.0};
+    double          cp{0.0};
+    int             network{0};  // owning $points network index
+};
+
 class AeroModel {
 public:
     // Reads and parses the given A502 input deck.
@@ -125,6 +140,19 @@ public:
     std::vector<Section>  sections;   // every input section, in file order
     std::vector<Network>  networks;   // networks reconstructed from $points
 
+    // ----- prototype solution ---------------------------------------------
+    // solve() panelizes every $points network into a flat list of Panels in
+    // i-major cell order (the same order as the quads emitted by
+    // PrintParaview, so the Cp field lines up with the cells).  It is the
+    // geometric precursor of the real higher-order panel solve and stamps a
+    // synthetic Cp field so the result can be inspected in a visualizer.
+    std::vector<Panel>  panels;                // all cells, in i-major order
+    double              totalSurfaceArea{0.0}; // sum of panel areas
+    std::size_t         totalPanels{0};        // panels.size() after solve()
+
+    bool solve();                  // false if the model has no usable grid
+    bool isSolved() const;         // true after a successful solve()
+
     // Finds the first section whose normalized keyword contains "kwFragment"
     // (sub-string, case-insensitive).  Returns nullptr when not found.
     const Section* findSection(const std::string& kwFragment) const;
@@ -133,6 +161,7 @@ private:
     void extractParameters();
     void extractNetworks();
     void writeHeader(std::ostream& out) const;
+    bool solved_{false};
 };
 
 } // namespace a502

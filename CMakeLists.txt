@@ -155,8 +155,10 @@ foreach(exec  ${TargetLIst})
 	else()
     #target_compile_options(${exec} PRIVATE -Wall -Wextra -Wpedantic )
 	endif()
-	# Прекомпилированный заголовко
+	# Прекомпилированный заголовок (добавляется, только если файл существует)
+	if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Console/pch.h)
 	target_precompile_headers(${exec} PRIVATE Console/pch.h)
+	endif()
 	# линковака бибилиотек подтянутых менеджером пакетов
 	target_link_libraries(${exec} PRIVATE Eigen3::Eigen)
 	target_link_libraries(${exec} PRIVATE HighFive)
