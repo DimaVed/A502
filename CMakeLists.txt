@@ -129,13 +129,14 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 add_subdirectory (src/A502lib)
 add_subdirectory (src/Tests)
 add_subdirectory (src/Visualizer)
+add_subdirectory (src/ResultVisualizer)
 add_subdirectory (src/Solver)
 
 
 include_directories(${HDF5_INCLUDE_DIRS})
-set (TargetLIst  A502lib Tests Visualizer Solver )
+set (TargetLIst  A502lib Tests Visualizer ResultVisualizer Solver )
 
-set (LibLinkList  Tests Visualizer Solver  )
+set (LibLinkList  Tests Visualizer ResultVisualizer Solver  )
 
 
 
