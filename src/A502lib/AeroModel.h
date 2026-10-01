@@ -110,8 +110,8 @@ public:
     // Throws std::runtime_error if the file can not be created.
     void writeOut(const std::string& outPath) const;
 
-    // Short console-friendly summary: title, flow parameters, network table.
-    void printSummary(std::ostream& out) const;
+    // Short summary via BLOG(info): title, flow parameters, network table.
+    void printSummary() const;
 
     // Writes the parsed model as a VTK unstructured grid (.vtu) so it can be
     // inspected in ParaView.  Every $points network is turned into a quad mesh

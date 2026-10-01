@@ -10,10 +10,10 @@
 // input file (or in the current working directory if the stem alone is used).
 
 #include <filesystem>
-#include <iostream>
 #include <string>
 
 #include "AeroModel.h"
+#include "Logger.h"
 
 namespace fs = std::filesystem;
 
@@ -24,9 +24,11 @@ static fs::path defaultVtuPath(const fs::path& inp) {
 }
 
 int main(int argc, char** argv) {
+    InitBoostLogFilter("logs/visualizer", boost::log::trivial::info);
+
     if (argc < 2) {
-        std::cerr << "usage: " << (argc > 0 ? argv[0] : "Visualizer")
-                  << " <input.inp> [output.vtu]\n";
+        BLOG(error) << "usage: " << (argc > 0 ? argv[0] : "Visualizer")
+                    << " <input.inp> [output.vtu]";
         return 2;
     }
 
@@ -36,22 +38,22 @@ int main(int argc, char** argv) {
 
     try {
         a502::AeroModel model;
-        std::cout << "Reading A502 input: " << inpPath.string() << "\n";
+        BLOG(info) << "Reading A502 input: " << inpPath.string();
         model.parse(inpPath.string());
 
         if (model.networks.empty()) {
-            std::cerr << "error: no $points networks found in input\n";
+            BLOG(error) << "No $points networks found in input";
             return 1;
         }
 
-        model.printSummary(std::cout);
+        model.printSummary();
 
-        std::cout << "Writing ParaView VTU: " << vtuPath.string() << "\n";
+        BLOG(info) << "Exporting geometry to ParaView";
         model.PrintParaview(vtuPath.string());
-        std::cout << "Done.\n";
+        BLOG(info) << "Done";
         return 0;
     } catch (const std::exception& e) {
-        std::cerr << "error: " << e.what() << "\n";
+        BLOG(error) << e.what();
         return 1;
     }
 }

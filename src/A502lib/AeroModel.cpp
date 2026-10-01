@@ -3,6 +3,7 @@
 // Implementation of the A502 input deck parser / model (see AeroModel.h).
 
 #include "AeroModel.h"
+#include "Logger.h"
 
 #include <algorithm>
 #include <cctype>
@@ -171,10 +172,13 @@ void AeroModel::clear() {
 void AeroModel::parse(const std::string& inpPath) {
     clear();
 
+    BLOG(info) << "Parsing A502 input deck: " << inpPath;
     std::ifstream in(inpPath);
-    if (!in.is_open())
+    if (!in.is_open()) {
+        BLOG(error) << "Cannot open input file \"" << inpPath << "\"";
         throw std::runtime_error("AeroModel::parse: cannot open input file \"" +
                                  inpPath + "\"");
+    }
 
     Section     current;
     bool        haveSection = false;
@@ -294,6 +298,9 @@ void AeroModel::parse(const std::string& inpPath) {
 
     extractParameters();
     extractNetworks();
+    BLOG(info) << "Parsed " << sections.size() << " sections, "
+               << networks.size() << " networks"
+               << " (mach=" << amach << ", nacase=" << nacase << ")";
 }
 void AeroModel::parse(const std::string& inpPath, const std::string& outPath) {
     parse(inpPath);
@@ -301,10 +308,13 @@ void AeroModel::parse(const std::string& inpPath, const std::string& outPath) {
 }
 
 void AeroModel::writeOut(const std::string& outPath) const {
+    BLOG(info) << "Writing model report: " << outPath;
     std::ofstream out(outPath);
-    if (!out.is_open())
+    if (!out.is_open()) {
+        BLOG(error) << "Cannot create report file \"" << outPath << "\"";
         throw std::runtime_error("AeroModel::writeOut: cannot create file \"" +
                                  outPath + "\"");
+    }
 
     out << std::fixed << std::setprecision(5);
     writeHeader(out);
@@ -393,43 +403,46 @@ void AeroModel::writeOut(const std::string& outPath) const {
         }
     }
     out << "\n... end of model report ...\n";
+    BLOG(info) << "Model report written: " << outPath;
 }
 
-void AeroModel::printSummary(std::ostream& out) const {
-    out << "title:";
+void AeroModel::printSummary() const {
     if (titleLines.empty()) {
-        out << " (none)\n";
+        BLOG(info) << "title: (none)";
     } else {
-        out << "\n";
+        BLOG(info) << "title:";
         for (const auto& line : titleLines)
-            out << "  " << line << "\n";
+            BLOG(info) << "  " << line;
     }
 
-    out << "mach=" << amach
-        << "  nacase=" << nacase
-        << "  alpc=" << alpc
-        << "  misym=" << misym
-        << "  mjsym=" << mjsym << "\n";
+    BLOG(info) << "mach=" << amach
+               << "  nacase=" << nacase
+               << "  alpc=" << alpc
+               << "  misym=" << misym
+               << "  mjsym=" << mjsym;
 
-    out << "networks: " << networks.size() << "\n";
+    BLOG(info) << "networks: " << networks.size();
     for (std::size_t i = 0; i < networks.size(); ++i) {
         const Network& n = networks[i];
         const std::size_t nPts = n.coordinates.size() / 3;
         const int nCells =
             (n.nm > 1 && n.nn > 1) ? (n.nm - 1) * (n.nn - 1) : 0;
-        out << "  [" << i << "] '" << n.netname << "'"
-            << "  kn=" << n.kn << " kt=" << n.kt
-            << "  nm=" << n.nm << " nn=" << n.nn
-            << "  points=" << nPts
-            << "  quads~=" << nCells << "\n";
+        BLOG(info) << "  [" << i << "] '" << n.netname << "'"
+                   << "  kn=" << n.kn << " kt=" << n.kt
+                   << "  nm=" << n.nm << " nn=" << n.nn
+                   << "  points=" << nPts
+                   << "  quads~=" << nCells;
     }
 }
 
 void AeroModel::PrintParaview(const std::string& vtkPath) const {
 #ifdef WITH_VTK
-    if (networks.empty())
+    BLOG(info) << "Writing ParaView VTU: " << vtkPath;
+    if (networks.empty()) {
+        BLOG(error) << "PrintParaview: model contains no grid networks";
         throw std::runtime_error(
             "AeroModel::PrintParaview: model contains no grid networks");
+    }
 
     vtkNew<vtkPoints>           points;
     vtkNew<vtkUnstructuredGrid> grid;
@@ -522,12 +535,18 @@ void AeroModel::PrintParaview(const std::string& vtkPath) const {
     writer->SetFileName(vtkPath.c_str());
     writer->SetInputData(grid);
     writer->SetDataModeToAscii();
-    if (writer->Write() == 0)
+    if (writer->Write() == 0) {
+        BLOG(error) << "VTK writer failed for \"" << vtkPath << "\"";
         throw std::runtime_error(
             "AeroModel::PrintParaview: VTK writer failed for \"" + vtkPath +
             "\"");
+    }
+    BLOG(info) << "ParaView VTU written: " << vtkPath
+               << " (" << grid->GetNumberOfPoints() << " points, "
+               << grid->GetNumberOfCells() << " cells)";
 #else
     (void)vtkPath;
+    BLOG(error) << "PrintParaview: built without VTK support (WITH_VTK)";
     throw std::runtime_error(
         "AeroModel::PrintParaview: built without VTK support (WITH_VTK)");
 #endif
@@ -840,6 +859,12 @@ bool AeroModel::solve() {
 
     totalPanels = panels.size();
     solved_ = !panels.empty();
+    if (solved_) {
+        BLOG(info) << "solve(): " << totalPanels << " panels, total area="
+                   << totalSurfaceArea;
+    } else {
+        BLOG(warning) << "solve(): no usable panels from networks";
+    }
     return solved_;
 }
 

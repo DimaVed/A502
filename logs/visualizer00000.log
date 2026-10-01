@@ -1,0 +1,18 @@
+2026-10-01T09:36:49.764435 info [main.cpp 41] Reading A502 input: c:\dev\A502\samples\swb.inp
+2026-10-01T09:36:49.765434 info [AeroModel.cpp 175] Parsing A502 input deck: c:\dev\A502\samples\swb.inp
+2026-10-01T09:36:49.766594 info [AeroModel.cpp 301] Parsed 21 sections, 6 networks (mach=0.6, nacase=1)
+2026-10-01T09:36:49.766594 info [AeroModel.cpp 413] title:
+2026-10-01T09:36:49.766594 info [AeroModel.cpp 415]   simple wing-body with composite panel. (run with a502i)
+2026-10-01T09:36:49.766594 info [AeroModel.cpp 415]   saaris  865-6209  m/s 7c-36
+2026-10-01T09:36:49.766594 info [AeroModel.cpp 418] mach=0.6  nacase=1  alpc=4  misym=1  mjsym=0
+2026-10-01T09:36:49.766594 info [AeroModel.cpp 424] networks: 6
+2026-10-01T09:36:49.766594 info [AeroModel.cpp 430]   [0] 'winga'  kn=4 kt=1  nm=11 nn=3  points=33  quads~=20
+2026-10-01T09:36:49.766594 info [AeroModel.cpp 430]   [1] 'wingta'  kn=4 kt=1  nm=6 nn=2  points=12  quads~=5
+2026-10-01T09:36:49.766594 info [AeroModel.cpp 430]   [2] 'bodyl'  kn=4 kt=1  nm=11 nn=3  points=33  quads~=20
+2026-10-01T09:36:49.766594 info [AeroModel.cpp 430]   [3] 'bodyu'  kn=4 kt=1  nm=11 nn=3  points=33  quads~=20
+2026-10-01T09:36:49.766594 info [AeroModel.cpp 430]   [4] 'bodyb'  kn=1 kt=5  nm=5 nn=2  points=10  quads~=4
+2026-10-01T09:36:49.766594 info [AeroModel.cpp 430]   [5] 'awbw'  kn=1 kt=20  nm=4 nn=2  points=8  quads~=3
+2026-10-01T09:36:49.766594 info [main.cpp 51] Exporting geometry to ParaView
+2026-10-01T09:36:49.766594 info [AeroModel.cpp 440] Writing ParaView VTU: c:\dev\A502\build-test\swb.vtu
+2026-10-01T09:36:49.768594 info [AeroModel.cpp 544] ParaView VTU written: c:\dev\A502\build-test\swb.vtu (129 points, 123 cells)
+2026-10-01T09:36:49.768594 info [main.cpp 53] Done
