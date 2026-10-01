@@ -162,6 +162,10 @@ void AeroModel::clear() {
     offBodyPoints.clear();
     sections.clear();
     networks.clear();
+    panels.clear();
+    totalSurfaceArea = 0.0;
+    totalPanels = 0;
+    solved_ = false;
 }
 
 void AeroModel::parse(const std::string& inpPath) {
@@ -389,6 +393,36 @@ void AeroModel::writeOut(const std::string& outPath) const {
         }
     }
     out << "\n... end of model report ...\n";
+}
+
+void AeroModel::printSummary(std::ostream& out) const {
+    out << "title:";
+    if (titleLines.empty()) {
+        out << " (none)\n";
+    } else {
+        out << "\n";
+        for (const auto& line : titleLines)
+            out << "  " << line << "\n";
+    }
+
+    out << "mach=" << amach
+        << "  nacase=" << nacase
+        << "  alpc=" << alpc
+        << "  misym=" << misym
+        << "  mjsym=" << mjsym << "\n";
+
+    out << "networks: " << networks.size() << "\n";
+    for (std::size_t i = 0; i < networks.size(); ++i) {
+        const Network& n = networks[i];
+        const std::size_t nPts = n.coordinates.size() / 3;
+        const int nCells =
+            (n.nm > 1 && n.nn > 1) ? (n.nm - 1) * (n.nn - 1) : 0;
+        out << "  [" << i << "] '" << n.netname << "'"
+            << "  kn=" << n.kn << " kt=" << n.kt
+            << "  nm=" << n.nm << " nn=" << n.nn
+            << "  points=" << nPts
+            << "  quads~=" << nCells << "\n";
+    }
 }
 
 void AeroModel::PrintParaview(const std::string& vtkPath) const {
@@ -742,6 +776,71 @@ void AeroModel::extractNetworks() {
             networks.push_back(std::move(n));
         }
     }
+}
+
+bool AeroModel::isSolved() const {
+    return solved_;
+}
+
+bool AeroModel::solve() {
+    // Geometric precursor only: build one Panel per quad cell so a visualizer
+    // can shade a synthetic Cp field.  Full higher-order AIC solve lives in
+    // the Fortran A502 code and is not ported here yet.
+    panels.clear();
+    totalSurfaceArea = 0.0;
+    totalPanels = 0;
+    solved_ = false;
+
+    for (std::size_t netIdx = 0; netIdx < networks.size(); ++netIdx) {
+        const Network& n = networks[netIdx];
+        const int nm = n.nm;
+        const int nn = n.nn;
+        if (nm < 2 || nn < 2)
+            continue;
+
+        const std::size_t nAvail = n.coordinates.size() / 3;
+        auto pointAt = [&](int i, int j, Eigen::Vector3d& p) -> bool {
+            const std::size_t g = static_cast<std::size_t>(j) * nm + i;
+            if (g >= nAvail)
+                return false;
+            p = Eigen::Vector3d(n.coordinates[g * 3 + 0],
+                                n.coordinates[g * 3 + 1],
+                                n.coordinates[g * 3 + 2]);
+            return true;
+        };
+
+        for (int i = 0; i + 1 < nm; ++i) {
+            for (int j = 0; j + 1 < nn; ++j) {
+                Eigen::Vector3d p00, p10, p11, p01;
+                if (!pointAt(i, j, p00) || !pointAt(i + 1, j, p10) ||
+                    !pointAt(i + 1, j + 1, p11) || !pointAt(i, j + 1, p01))
+                    continue;
+
+                const Eigen::Vector3d center =
+                    0.25 * (p00 + p10 + p11 + p01);
+                const Eigen::Vector3d nvec =
+                    (p10 - p00).cross(p01 - p00) +
+                    (p01 - p11).cross(p10 - p11);
+                const double nnorm = nvec.norm();
+                if (nnorm <= 0.0)
+                    continue;
+
+                Panel pan;
+                pan.center = center;
+                pan.normal = nvec / nnorm;
+                pan.area = 0.5 * nnorm;
+                // Synthetic Cp so ParaView has a visible scalar (placeholder).
+                pan.cp = pan.normal.x();
+                pan.network = static_cast<int>(netIdx);
+                totalSurfaceArea += pan.area;
+                panels.push_back(std::move(pan));
+            }
+        }
+    }
+
+    totalPanels = panels.size();
+    solved_ = !panels.empty();
+    return solved_;
 }
 
 } // namespace a502

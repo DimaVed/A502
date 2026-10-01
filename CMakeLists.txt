@@ -167,7 +167,10 @@ foreach(exec  ${TargetLIst})
 	target_include_directories(${exec} PRIVATE ${OpenCASCADE_INCLUDE_DIRS})
     target_link_libraries(${exec} PRIVATE ${OCCT_LIBS})
 	target_link_libraries(${exec} PRIVATE MKL::MKL)
-	target_link_libraries(${exec} PRIVATE  Catch2::Catch2 Catch2::Catch2WithMain)
+	# Catch2WithMain provides main(); only Tests should use it.
+	if(exec STREQUAL "Tests")
+		target_link_libraries(${exec} PRIVATE Catch2::Catch2 Catch2::Catch2WithMain)
+	endif()
 	target_link_libraries(${exec} PRIVATE nlohmann_json::nlohmann_json)
     
 	#target_link_libraries(${exec} PRIVATE Tracy::TracyClient)

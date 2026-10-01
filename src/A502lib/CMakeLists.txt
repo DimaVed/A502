@@ -15,3 +15,6 @@ endif()
 file (GLOB_RECURSE  Src  *.cpp  *.h )
 add_library(A502lib STATIC  ${Src} )
 
+# Consumers (Visualizer, Solver, Tests) include "AeroModel.h" / "Logger.h".
+target_include_directories(A502lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
