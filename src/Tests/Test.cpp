@@ -270,6 +270,85 @@ TEST_CASE("$elliptic: elliptical cross-section grid", "[parser][elliptic]") {
     fs::remove(deck, ec);
 }
 
+TEST_CASE("$gothic: delta wing grid", "[parser][gothic]") {
+    const fs::path deck = fs::temp_directory_path() / "a502_got_test.inp";
+    auto writeDeck = [&](bool sweep, bool labels) {
+        std::ofstream out(deck);
+        REQUIRE(out.is_open());
+        out << "$gothic\n"
+               "=kn\n"
+               "1.\n"
+               "=kt\n"
+               "1.\n"
+               "5. got\n"
+               "0. 0. 0. 1. 1. 0.\n"
+               "2. 2. 0. 3. 2. 0.\n"
+               "4. 2. 0.\n";
+        if (labels) {
+            out << "=nrow\n"
+                   "3.\n"
+                   "=ypc(1) ypc(2) ypc(3)\n"
+                   "0. 0.5 1.\n"
+                   "=ncen\n"
+                << (sweep ? "3.\n" : "5.\n");
+        } else {
+            out << "3.\n"
+                   "0. 0.5 1.\n"
+                << (sweep ? "3.\n" : "5.\n");
+        }
+    };
+
+    auto checkGrid = [](const a502::AeroModel& model, bool sweep) {
+        REQUIRE(model.networks.size() == 1);
+        const auto& net = model.networks[0];
+        CHECK(net.netname == "got");
+        CHECK(net.nm == 3);
+        CHECK(net.nn == 5);
+        REQUIRE(net.coordinates.size() == 45);
+        auto point = [&](int i, int j) {
+            const std::size_t base =
+                static_cast<std::size_t>(3) * (i + net.nm * j);
+            return Eigen::Vector3d(net.coordinates[base],
+                                   net.coordinates[base + 1],
+                                   net.coordinates[base + 2]);
+        };
+        CHECK(point(0, 0).isApprox(Eigen::Vector3d(0, 0, 0), 1e-14));
+        CHECK(point(1, 2).isApprox(Eigen::Vector3d(2, 1, 0), 1e-14));
+        CHECK(point(2, 4).isApprox(Eigen::Vector3d(4, 2, 0), 1e-14));
+        if (sweep) {
+            CHECK(point(0, 3).isApprox(Eigen::Vector3d(3, 1, 0), 1e-14));
+            CHECK(point(2, 3).isApprox(Eigen::Vector3d(3, 2, 0), 1e-14));
+            CHECK(point(0, 4).isApprox(Eigen::Vector3d(4, 2, 0), 1e-14));
+        }
+    };
+
+    SECTION("labeled straight trailing edge") {
+        writeDeck(false, true);
+        a502::AeroModel model;
+        model.parse(deck.string());
+        checkGrid(model, false);
+        REQUIRE(model.solve());
+        CHECK(model.totalPanels == 8);
+    }
+
+    SECTION("labeled swept trailing edge") {
+        writeDeck(true, true);
+        a502::AeroModel model;
+        model.parse(deck.string());
+        checkGrid(model, true);
+    }
+
+    SECTION("unlabeled cards") {
+        writeDeck(true, false);
+        a502::AeroModel model;
+        model.parse(deck.string());
+        checkGrid(model, true);
+    }
+
+    std::error_code ec;
+    fs::remove(deck, ec);
+}
+
 TEST_CASE("$quadrilateral: bilinear grid", "[parser][quadrilateral]") {
     const fs::path deck = fs::temp_directory_path() / "a502_quad_test.inp";
     auto writeDeck = [&](const std::string& corners) {

@@ -805,6 +805,9 @@ void AeroModel::extractNetworks() {
         else if (sec.keywordNorm == "elliptic" ||
                  sec.keywordNorm == "ell")
             extractEllipticalSection(sec);
+        else if (sec.keywordNorm == "gothic" ||
+                 sec.keywordNorm == "got")
+            extractGothicSection(sec);
         else if (sec.keywordNorm == "trailing" || sec.keywordNorm == "tra")
             extractTrailingSection(sec);
     }
@@ -1446,6 +1449,198 @@ void AeroModel::extractEllipticalSection(const Section& sec) {
         }
     }
     finishBlock();
+}
+
+void AeroModel::extractGothicSection(const Section& sec) {
+    // Port of gadnet(): gothic / arrow / delta wing grid.  The corner cards
+    // are (x, semi-span, z) stations; each column spans y from the first
+    // station to the column station according to the ypc fractions.  When
+    // ncen < ncol the remaining stations use A502's swept trailing edge.
+    int sectionKn = 0;
+    int sectionKt = 0;
+    double sectionCpnorm = 2.0;
+    bool pendingKn = false;
+    bool pendingKt = false;
+    bool afterKt = false;
+    int ncol = 0;
+    std::string netname;
+    std::vector<Eigen::Vector3d> corners;
+    int nrow = 0;
+    int ncen = 0;
+    std::vector<double> ypc;
+    bool sawNrowLabel = false;
+    bool sawYpcLabel = false;
+    bool sawNcenLabel = false;
+    std::vector<std::vector<double>> tailCards;
+
+    auto groupValues = [&](std::size_t index) {
+        std::vector<Value> values = sec.entries[index].values;
+        for (std::size_t j = index + 1;
+             j < sec.entries.size() &&
+             sec.entries[j].kind == EntryKind::FreeData;
+             ++j) {
+            values.insert(values.end(),
+                          sec.entries[j].values.begin(),
+                          sec.entries[j].values.end());
+        }
+        return values;
+    };
+    auto numbers = [](const std::vector<Value>& values) {
+        std::vector<double> out;
+        for (const Value& v : values)
+            if (v.numeric)
+                out.push_back(v.number);
+        return out;
+    };
+
+    for (std::size_t ei = 0; ei < sec.entries.size(); ++ei) {
+        const Entry& e = sec.entries[ei];
+        if (e.kind == EntryKind::Variable && !e.names.empty()) {
+            const std::string& first = e.names.front();
+            if (first == "kn") {
+                pendingKn = true;
+            } else if (first == "kt") {
+                pendingKt = true;
+            } else if (first == "nrow") {
+                sawNrowLabel = true;
+                afterKt = false;
+                const std::vector<double> values = numbers(groupValues(ei));
+                if (!values.empty())
+                    nrow = static_cast<int>(
+                        std::lround(values.front()));
+            } else if (first == "ypc") {
+                sawYpcLabel = true;
+                afterKt = false;
+                ypc = numbers(groupValues(ei));
+            } else if (first == "ncen") {
+                sawNcenLabel = true;
+                afterKt = false;
+                const std::vector<double> values = numbers(groupValues(ei));
+                if (!values.empty())
+                    ncen = static_cast<int>(
+                        std::lround(values.front()));
+            }
+            continue;
+        }
+        if (e.kind != EntryKind::FreeData)
+            continue;
+
+        if (pendingKn) {
+            const std::vector<double> values = numbers(e.values);
+            if (!values.empty()) {
+                sectionKn = static_cast<int>(
+                    std::lround(values.front()));
+                if (values.size() >= 2)
+                    sectionCpnorm = values.back();
+            }
+            pendingKn = false;
+        } else if (pendingKt) {
+            const std::vector<double> values = numbers(e.values);
+            if (!values.empty())
+                sectionKt = static_cast<int>(
+                    std::lround(values.front()));
+            pendingKt = false;
+            afterKt = true;
+        } else if (afterKt && ncol == 0) {
+            const std::vector<double> values = numbers(e.values);
+            if (values.empty())
+                continue;
+            ncol = static_cast<int>(std::lround(values.front()));
+            for (const Value& v : e.values) {
+                if (!v.numeric) {
+                    netname = v.text;
+                    break;
+                }
+            }
+        } else if (afterKt &&
+                   static_cast<int>(corners.size()) < ncol) {
+            const std::vector<double> values = numbers(e.values);
+            for (std::size_t k = 0; k + 2 < values.size(); k += 3)
+                corners.emplace_back(values[k], values[k + 1],
+                                     values[k + 2]);
+        } else {
+            const std::vector<double> values = numbers(e.values);
+            if (!values.empty())
+                tailCards.push_back(values);
+        }
+    }
+
+    if (!sawNrowLabel && !sawYpcLabel && !sawNcenLabel) {
+        // Unlabeled cards: nrow card, ypc cards, ncen card.
+        std::size_t ci = 0;
+        if (nrow <= 0 && ci < tailCards.size())
+            nrow = static_cast<int>(
+                std::lround(tailCards[ci++].front()));
+        while (static_cast<int>(ypc.size()) < nrow &&
+               ci < tailCards.size()) {
+            ypc.insert(ypc.end(), tailCards[ci].begin(),
+                       tailCards[ci].end());
+            ++ci;
+        }
+        if (ncen <= 0 && ci < tailCards.size())
+            ncen = static_cast<int>(
+                std::lround(tailCards[ci++].front()));
+    }
+
+    if (ncol < 2 || nrow < 2 || ncen < 1 ||
+        static_cast<int>(corners.size()) < ncol ||
+        static_cast<int>(ypc.size()) < nrow || netname.empty()) {
+        BLOG(warning) << "$gothic: incomplete network definition";
+        return;
+    }
+    if (ncen > ncol)
+        ncen = ncol;
+
+    const Eigen::Vector3d& root = corners[0];
+    Network net;
+    net.netname = netname;
+    net.nm = nrow;
+    net.nn = ncol;
+    net.kn = sectionKn;
+    net.kt = sectionKt;
+    net.cpnorm = sectionCpnorm;
+    net.coordinates.reserve(
+        static_cast<std::size_t>(3) * nrow * ncol);
+
+    for (int j = 0; j < ncen; ++j) {
+        const Eigen::Vector3d& corner =
+            corners[static_cast<std::size_t>(j)];
+        const double dy = corner.y() - root.y();
+        for (int i = 0; i < nrow; ++i) {
+            net.coordinates.push_back(corner.x());
+            net.coordinates.push_back(
+                root.y() + ypc[static_cast<std::size_t>(i)] * dy);
+            net.coordinates.push_back(corner.z());
+        }
+    }
+
+    if (ncen < ncol) {
+        const Eigen::Vector3d& last =
+            corners[static_cast<std::size_t>(ncol - 1)];
+        const Eigen::Vector3d& start =
+            corners[static_cast<std::size_t>(ncen - 1)];
+        const double dx = last.x() - start.x();
+        if (!(std::abs(dx) > 1.0e-14)) {
+            BLOG(warning) << "$gothic: zero-sweep denominator";
+            return;
+        }
+        const double rm = (last.y() - root.y()) / dx;
+        for (int j = ncen; j < ncol; ++j) {
+            const Eigen::Vector3d& corner =
+                corners[static_cast<std::size_t>(j)];
+            const double xj = corner.x();
+            const double yt = root.y() + (xj - start.x()) * rm;
+            const double yd = corner.y() - yt;
+            for (int i = 0; i < nrow; ++i) {
+                net.coordinates.push_back(xj);
+                net.coordinates.push_back(
+                    yt + ypc[static_cast<std::size_t>(i)] * yd);
+                net.coordinates.push_back(corner.z());
+            }
+        }
+    }
+
+    networks.push_back(std::move(net));
 }
 
 void AeroModel::extractTrailingSection(const Section& sec) {

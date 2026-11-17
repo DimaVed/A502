@@ -6,7 +6,8 @@
 
 - Парсер `$points`, генераторы `$circular` (nac6: 5 сетей, 185 точек,
   128 панелей), `$trailing` (swb: 9 сетей, 78 панелей),
-  `$quadrilateral` (билинейная сетка) и `$elliptic`, контрольные точки.
+  `$quadrilateral` (билинейная сетка), `$elliptic` и `$gothic`/`$got`,
+  контрольные точки.
 - Геометрия панелей: P1..P9, 8 подпанелей, collapsed edges.
 - `refloc`-фреймы, сжимаемость, `Compressibility`.
 - Субпанельные сплайны:
@@ -106,10 +107,10 @@
   default BC с упрощённым выбором `nbin`; `Panel.cp` при отказе остаётся
   заглушкой.
 - Из генераторов геометрии есть `$circular`, `$trailing`,
-  `$quadrilateral` и `$elliptic`; нет `$gothic`.  В `$circular`/
-  `$elliptic` не поддержан вариант `nopt>0` с z-картами без заголовка
-  `=z`, в `$quadrilateral` — raw corner-карты без заголовков
-  (используется формат с `=nrow`/`=ypc`/`=ncol`/`=xpc`).
+  `$quadrilateral`, `$elliptic` и `$gothic`; нет `$camber`/`$cam`.
+  В `$circular`/`$elliptic` не поддержан вариант `nopt>0` с z-картами
+  без заголовка `=z`, в `$quadrilateral` — raw corner-карты без
+  заголовков (используется формат с `=nrow`/`=ypc`/`=ncol`/`=xpc`).
 - Нет сил/моментов, streamlines, off-body flow field.
 - Нет валидации на эталонных результатах PAN AIR.
 
@@ -184,8 +185,9 @@
 
 ### Этап 6. Геометрия и парсер
 
-1. Генератор `$gothic`
-   (`$circular`, `$trailing`, `$quadrilateral`, `$elliptic` уже есть).
+1. Генератор `$camber`/`$cam`
+   (`$circular`, `$trailing`, `$quadrilateral`, `$elliptic`, `$gothic`
+   уже есть).
 2. Полная поддержка `nac6`/соответствующих секций.
 3. Недостающие опции `$points`/сетей.
 
