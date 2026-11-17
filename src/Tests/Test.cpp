@@ -1148,6 +1148,41 @@ TEST_CASE("boundary condition rows: nct=1 and nct=4",
                     influence, panel.normal, flow, bad, local)
                     .valid);
 
+    // Generic point evaluation must agree with the P9 specialization and
+    // with the source outer spline at an edge midpoint and a corner.
+    const auto genericCenter = a502::buildPanelPointLocalTerms(
+        net, flow, 3, 3, panel.cp[8], globalLayout.network[0].doublet);
+    REQUIRE(genericCenter.valid);
+    REQUIRE(genericCenter.sourceId == local.sourceId);
+    CHECK((genericCenter.sourceValue - local.sourceValue).norm() < 1e-10);
+    CHECK((genericCenter.doubletValue - local.doubletValue).norm() < 1e-10);
+
+    const auto edgeLocal = a502::buildPanelPointLocalTerms(
+        net, flow, 3, 3, panel.cp[4], globalLayout.network[0].doublet);
+    REQUIRE(edgeLocal.valid);
+    const auto sourceSpline = a502::buildSourceOuterSpline(net, 3, 3);
+    REQUIRE(sourceSpline.valid);
+    REQUIRE(edgeLocal.sourceId.size() == 9);
+    for (int k = 0; k < 9; ++k) {
+        const double expected =
+            0.5 * (sourceSpline.coefficients(0, k) +
+                   sourceSpline.coefficients(1, k));
+        CHECK(edgeLocal.sourceValue(k) ==
+              Catch::Approx(expected).epsilon(1e-10));
+    }
+    CHECK(edgeLocal.doubletValue.allFinite());
+
+    const auto cornerLocal = a502::buildPanelPointLocalTerms(
+        net, flow, 3, 3, panel.cp[0], globalLayout.network[0].doublet);
+    REQUIRE(cornerLocal.valid);
+    REQUIRE(cornerLocal.sourceId.size() == 9);
+    for (int k = 0; k < 9; ++k) {
+        CHECK(cornerLocal.sourceValue(k) ==
+              Catch::Approx(sourceSpline.coefficients(0, k))
+                  .epsilon(1e-10));
+    }
+    CHECK(cornerLocal.doubletValue.allFinite());
+
     const auto controlPoints = a502::buildNetworkControlPoints(net);
     const auto system = a502::buildNetworkNormalFluxRows(
         net, flow, globalLayout.network[0], controlPoints, 1.0, 0.0);

@@ -42,6 +42,11 @@ struct LocalSingularityTerms {
     bool valid{false};
 };
 
+LocalSingularityTerms buildPanelPointLocalTerms(
+    const Network& network, const Compressibility& flow, int panelI,
+    int panelJ, const Eigen::Vector3d& fieldPoint,
+    const NetworkDoubletParameters& doubletParameters);
+
 LocalSingularityTerms buildPanelCenterLocalTerms(
     const Network& network, const Compressibility& flow, int panelI,
     int panelJ, const NetworkDoubletParameters& doubletParameters);

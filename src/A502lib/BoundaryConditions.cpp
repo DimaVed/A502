@@ -27,9 +27,10 @@ Eigen::Vector3d compressibilityScale(double bs,
 
 } // namespace
 
-LocalSingularityTerms buildPanelCenterLocalTerms(
+LocalSingularityTerms buildPanelPointLocalTerms(
     const Network& network, const Compressibility& flow, int panelI,
-    int panelJ, const NetworkDoubletParameters& doubletParameters) {
+    int panelJ, const Eigen::Vector3d& fieldPoint,
+    const NetworkDoubletParameters& doubletParameters) {
     LocalSingularityTerms out;
     const int nPanelM = network.nm - 1;
     const int nPanelN = network.nn - 1;
@@ -37,50 +38,143 @@ LocalSingularityTerms buildPanelCenterLocalTerms(
         panelI >= nPanelM || panelJ >= nPanelN)
         return out;
 
-    const SourceOuterSpline source =
-        buildSourceOuterSpline(network, panelI, panelJ);
-    if (!source.valid)
+    PanelGeometry panel = buildPanelGeometry(
+        network.coordinates, network.nm, network.nn, panelI, panelJ);
+    if (panel.degenerate)
+        return out;
+    applyCompressibleFrames(panel, flow);
+
+    const auto sourceSubpanels = buildSourceSubpanelSplines(panel);
+    const auto doubletSubpanels = buildDoubletSubpanelSplines(panel, flow);
+
+    auto insideTriangle = [](const Eigen::Vector2d& p,
+                             const Eigen::Vector2d& a,
+                             const Eigen::Vector2d& b,
+                             const Eigen::Vector2d& c,
+                             double& minWeight) {
+        const double den =
+            (b.x() - a.x()) * (c.y() - a.y()) -
+            (c.x() - a.x()) * (b.y() - a.y());
+        if (std::abs(den) <= 1.0e-30)
+            return false;
+        const double w1 =
+            ((p.x() - a.x()) * (c.y() - a.y()) -
+             (c.x() - a.x()) * (p.y() - a.y())) /
+            den;
+        const double w2 =
+            ((b.x() - a.x()) * (p.y() - a.y()) -
+             (p.x() - a.x()) * (b.y() - a.y())) /
+            den;
+        const double w0 = 1.0 - w1 - w2;
+        minWeight = std::min({w0, w1, w2});
+        return minWeight >= -1.0e-8;
+    };
+
+    double scale = 1.0;
+    for (int k = 0; k < 9; ++k)
+        scale = std::max(scale, (panel.cp[k] - panel.cp[8]).norm());
+
+    int sub = -1;
+    double bestInterior = -1.0e30;
+    double bestZ = 1.0e30;
+    for (int s = 0; s < 8; ++s) {
+        const std::size_t si = static_cast<std::size_t>(s);
+        if (panel.subpanels[si].degenerate ||
+            !sourceSubpanels[si].valid || !doubletSubpanels[si].valid)
+            continue;
+        const SubpanelGeometry& sp = panel.subpanels[si];
+        const Eigen::Matrix3d& frame =
+            sp.scaledValid ? sp.scaledToLocal : sp.toLocal;
+        const Eigen::Vector3d p0 =
+            frame * (sp.vertex[0] - sp.origin);
+        const Eigen::Vector3d p1 =
+            frame * (sp.vertex[1] - sp.origin);
+        const Eigen::Vector3d p2 =
+            frame * (sp.vertex[2] - sp.origin);
+        const Eigen::Vector3d localField =
+            frame * (fieldPoint - sp.origin);
+        double minWeight = -1.0;
+        if (!insideTriangle(Eigen::Vector2d(localField.x(), localField.y()),
+                            Eigen::Vector2d(p0.x(), p0.y()),
+                            Eigen::Vector2d(p1.x(), p1.y()),
+                            Eigen::Vector2d(p2.x(), p2.y()),
+                            minWeight))
+            continue;
+        const double zt = std::abs(localField.z());
+        if (zt > 1.0e-6 * scale)
+            continue;
+        if (minWeight > bestInterior ||
+            (minWeight == bestInterior && zt < bestZ)) {
+            bestInterior = minWeight;
+            bestZ = zt;
+            sub = s;
+        }
+    }
+    if (sub < 0)
         return out;
 
-    // P9 row of the source outer spline.
+    const std::size_t si = static_cast<std::size_t>(sub);
+    const SubpanelGeometry& sp = panel.subpanels[si];
+    const Eigen::Matrix3d& frame =
+        sp.scaledValid ? sp.scaledToLocal : sp.toLocal;
+
+    // Source strength at the field point in terms of canonical values.
+    const SourceSubpanelSpline& sourceSpline = sourceSubpanels[si];
+    const Eigen::Vector3d sourceLocal =
+        frame * (fieldPoint - sourceSpline.origin);
+    // The source spline rows are [a0, ax, ay]; columns are sigma1..4,sigma9.
+    Eigen::Matrix<double, 1, 5> valueBasis =
+        (Eigen::Matrix<double, 1, 3>() << 1.0, sourceLocal.x(),
+         sourceLocal.y()).finished() *
+        sourceSpline.coefficients;
+
+    const SourceOuterSpline sourceOuter =
+        buildSourceOuterSpline(network, panelI, panelJ);
+    if (!sourceOuter.valid)
+        return LocalSingularityTerms{};
+    const Eigen::Matrix<double, 1, 9> sourceRow =
+        valueBasis * sourceOuter.coefficients;
     for (int k = 0; k < 9; ++k) {
-        const int id = source.neighborPanel[static_cast<std::size_t>(k)];
+        const int id =
+            sourceOuter.neighborPanel[static_cast<std::size_t>(k)];
         if (id < 0)
             continue;
         out.sourceId.push_back(id);
         out.sourceValue.conservativeResize(out.sourceValue.size() + 1);
-        out.sourceValue(out.sourceValue.size() - 1) =
-            source.coefficients(4, k);
+        out.sourceValue(out.sourceValue.size() - 1) = sourceRow(k);
     }
 
-    const DoubletPanelSpline doublet = buildDoubletPanelSpline(
+    const DoubletPanelSpline doubletOuter = buildDoubletPanelSpline(
         network, flow, panelI, panelJ, doubletParameters);
-    if (!doublet.valid)
+    if (!doubletOuter.valid)
         return LocalSingularityTerms{};
 
-    PanelGeometry panel = buildPanelGeometry(
-        network.coordinates, network.nm, network.nn, panelI, panelJ);
-    if (panel.degenerate)
-        return LocalSingularityTerms{};
-    applyCompressibleFrames(panel, flow);
+    const DoubletSubpanelSpline& doubletSpline = doubletSubpanels[si];
+    const Eigen::Vector3d doubletLocal =
+        frame * (fieldPoint - doubletSpline.origin);
+    const double x = doubletLocal.x();
+    const double y = doubletLocal.y();
+    Eigen::Matrix<double, 1, 6> valueBasis6;
+    valueBasis6 << 1.0, x, y, 0.5 * x * x, x * y, 0.5 * y * y;
+    Eigen::Matrix<double, 1, 9> valueCanonical =
+        valueBasis6 * doubletSpline.coefficients;
 
-    const auto doubletSubpanels = buildDoubletSubpanelSplines(panel, flow);
-    const DoubletSubpanelSpline& inner = doubletSubpanels[4];
-    if (!inner.valid)
-        return LocalSingularityTerms{};
-    const SubpanelGeometry& sp = panel.subpanels[4];
+    Eigen::Matrix<double, 1, 6> dx;
+    dx << 0.0, 1.0, 0.0, x, y, 0.0;
+    Eigen::Matrix<double, 1, 6> dy;
+    dy << 0.0, 0.0, 1.0, 0.0, x, y;
+    Eigen::Matrix<double, 2, 9> gradCanonicalLocal;
+    gradCanonicalLocal.row(0) = dx * doubletSpline.coefficients;
+    gradCanonicalLocal.row(1) = dy * doubletSpline.coefficients;
     const Eigen::Matrix3d toGlobal =
         sp.scaledValid ? sp.scaledToGlobal : sp.toGlobal;
-
-    // Gradient of mu at P9 with respect to the nine canonical values.
-    Eigen::Matrix<double, 3, 9> canonicalGradient;
+    Eigen::Matrix<double, 3, 9> gradCanonical;
     for (int j = 0; j < 9; ++j) {
-        canonicalGradient.col(j) =
-            toGlobal * Eigen::Vector3d(inner.coefficients(1, j),
-                                       inner.coefficients(2, j), 0.0);
+        gradCanonical.col(j) =
+            toGlobal * Eigen::Vector3d(gradCanonicalLocal(0, j),
+                                       gradCanonicalLocal(1, j), 0.0);
     }
 
-    // Collect all local doublet parameter ids referenced by any row.
     auto findOrAdd = [&](int id) -> int {
         for (std::size_t k = 0; k < out.doubletId.size(); ++k) {
             if (out.doubletId[k] == id)
@@ -90,27 +184,39 @@ LocalSingularityTerms buildPanelCenterLocalTerms(
         return static_cast<int>(out.doubletId.size() - 1);
     };
     for (int row = 0; row < 9; ++row) {
-        for (int id : doublet.rows[static_cast<std::size_t>(row)].index)
+        for (int id :
+             doubletOuter.rows[static_cast<std::size_t>(row)].index)
             findOrAdd(id);
     }
 
     out.doubletValue = Eigen::Matrix<double, 4, Eigen::Dynamic>::Zero(
         4, static_cast<Eigen::Index>(out.doubletId.size()));
     for (int row = 0; row < 9; ++row) {
-        const DoubletRow& sourceRow =
-            doublet.rows[static_cast<std::size_t>(row)];
-        for (std::size_t k = 0; k < sourceRow.index.size(); ++k) {
-            const int col = findOrAdd(sourceRow.index[k]);
-            const double c = sourceRow.coefficient[k];
+        const DoubletRow& splineRow =
+            doubletOuter.rows[static_cast<std::size_t>(row)];
+        for (std::size_t k = 0; k < splineRow.index.size(); ++k) {
+            const int col = findOrAdd(splineRow.index[k]);
+            const double c = splineRow.coefficient[k];
+            out.doubletValue(0, col) +=
+                c * valueCanonical(row);
             out.doubletValue.col(col).segment<3>(1) +=
-                c * canonicalGradient.col(row);
-            if (row == 8)
-                out.doubletValue(0, col) += c;
+                c * gradCanonical.col(row);
         }
     }
 
     out.valid = true;
     return out;
+}
+
+LocalSingularityTerms buildPanelCenterLocalTerms(
+    const Network& network, const Compressibility& flow, int panelI,
+    int panelJ, const NetworkDoubletParameters& doubletParameters) {
+    PanelGeometry panel = buildPanelGeometry(
+        network.coordinates, network.nm, network.nn, panelI, panelJ);
+    if (panel.degenerate)
+        return LocalSingularityTerms{};
+    return buildPanelPointLocalTerms(
+        network, flow, panelI, panelJ, panel.cp[8], doubletParameters);
 }
 
 BoundaryRow buildBoundaryRow(
@@ -284,8 +390,9 @@ BoundarySystemRows buildNetworkNormalFluxRows(
         global.doublet = raw.doublet;
         global.valid = true;
 
-        const LocalSingularityTerms local = buildPanelCenterLocalTerms(
-            network, flow, cp.panelI, cp.panelJ, layout.doublet);
+        const LocalSingularityTerms local = buildPanelPointLocalTerms(
+            network, flow, cp.panelI, cp.panelJ, cp.position,
+            layout.doublet);
         if (!local.valid)
             return BoundarySystemRows{};
 
