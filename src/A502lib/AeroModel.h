@@ -186,6 +186,8 @@ public:
 private:
     void extractParameters();
     void extractNetworks();
+    void extractPointsSection(const Section& section);
+    void extractCircularSection(const Section& section);
     void extractMaterials();
     void writeHeader(std::ostream& out) const;
     bool solved_{false};

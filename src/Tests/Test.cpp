@@ -174,11 +174,13 @@ TEST_CASE("$points: synthetic deck and coordinate order", "[parser][points]") {
     fs::remove(deck, ec);
 }
 
-TEST_CASE("$circular is not a $points section", "[parser][points]") {
-    // nac6.inp uses $circular; the $points reader must not invent networks.
+TEST_CASE("$circular sections generate networks", "[parser][circular]") {
+    // nac6.inp has no $points sections; its networks come from $circular.
     a502::AeroModel model;
     model.parse(samplePath("nac6.inp").string());
-    CHECK(model.networks.empty());
+    REQUIRE(model.networks.size() == 5);
+    CHECK(model.networks.front().netname == "inlet");
+    CHECK(model.networks.back().netname == "base");
 }
 
 TEST_CASE("materials: nac6 parsing and matvfs ratios", "[parser][materials]") {
@@ -230,6 +232,57 @@ TEST_CASE("materials: nac6 parsing and matvfs ratios", "[parser][materials]") {
     plain.parse(samplePath("swb.inp").string());
     CHECK(plain.materials.size() == 1);
     CHECK(plain.surfaceMaterials.empty());
+}
+
+TEST_CASE("$circular: nac6 networks", "[parser][circular]") {
+    a502::AeroModel model;
+    model.parse(samplePath("nac6.inp").string());
+
+    REQUIRE(model.networks.size() == 5);
+    const char* names[5] = {"inlet", "cowlu", "cowll", "plume", "base"};
+    const int kt[5] = {9, 1, 1, 19, 5};
+    const int nm[5] = {4, 20, 3, 6, 4};
+    const int nn[5] = {5, 5, 5, 5, 5};
+    std::size_t points = 0;
+    std::size_t panels = 0;
+    for (int k = 0; k < 5; ++k) {
+        INFO("network " << k);
+        const auto& net = model.networks[static_cast<std::size_t>(k)];
+        CHECK(net.netname == names[k]);
+        CHECK(net.kt == kt[k]);
+        CHECK(net.nm == nm[k]);
+        CHECK(net.nn == nn[k]);
+        CHECK(net.coordinates.size() ==
+              static_cast<std::size_t>(3 * nm[k] * nn[k]));
+        points += static_cast<std::size_t>(nm[k] * nn[k]);
+        panels += static_cast<std::size_t>((nm[k] - 1) * (nn[k] - 1));
+    }
+    CHECK(points == 185);
+    CHECK(panels == 128);
+
+    // Surface of revolution: x = xs, y = r*cos(th), z = r*sin(th); the
+    // network coordinates are ordered by angular column, then station.
+    const auto& inlet = model.networks[0];
+    const std::size_t lastStation = 3; // xs = 2.0, r = 2.3
+    const double r0 = inlet.coordinates[lastStation * 3 + 1];
+    const double z0 = inlet.coordinates[lastStation * 3 + 2];
+    CHECK(std::abs(r0) < 1e-12);
+    CHECK(z0 == Catch::Approx(-2.3).epsilon(1e-12));
+    const std::size_t th0 = 2; // th = 0
+    const double y0 = inlet.coordinates[(th0 * 4 + lastStation) * 3 + 1];
+    const double z1 = inlet.coordinates[(th0 * 4 + lastStation) * 3 + 2];
+    CHECK(y0 == Catch::Approx(2.3).epsilon(1e-12));
+    CHECK(std::abs(z1) < 1e-12);
+
+    const auto& cowlu = model.networks[1];
+    CHECK(cowlu.coordinates[0] == Catch::Approx(2.0));
+    CHECK(std::abs(cowlu.coordinates[1]) < 1e-12);
+    CHECK(cowlu.coordinates[2] == Catch::Approx(-2.3).epsilon(1e-12));
+
+    // The generated networks go through the normal panelisation path.
+    REQUIRE(model.solve());
+    CHECK(model.totalPanels == 128);
+    CHECK(model.isSolved());
 }
 
 TEST_CASE("panel geometry: unit square", "[geometry]") {

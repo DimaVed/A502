@@ -790,6 +790,15 @@ bool parseNetworkCard(const Entry& e, int& nm, int& nn, std::string& netname) {
 } // namespace
 
 void AeroModel::extractNetworks() {
+    for (const auto& sec : sections) {
+        if (sec.keywordNorm == "points")
+            extractPointsSection(sec);
+        else if (sec.keywordNorm == "circular" || sec.keywordNorm == "cir")
+            extractCircularSection(sec);
+    }
+}
+
+void AeroModel::extractPointsSection(const Section& sec) {
     // The original reader (meshp / inbc) consumes a $points section as:
     //
     //   kn card      : 6E10.0 (field 1 = kn, field 6 = cpnorm)
@@ -801,10 +810,7 @@ void AeroModel::extractNetworks() {
     // followed by their value cards.  Older decks (ellip.inp) put the value
     // cards directly.  A single $points section may contain several networks;
     // kn/kt then apply to all of them.
-    for (const auto& sec : sections) {
-        if (sec.keywordNorm != "points")
-            continue;
-
+    {
         int    sectionKn = 0;
         int    sectionKt = 0;
         double sectionCpnorm = 2.0;
@@ -904,6 +910,167 @@ void AeroModel::extractNetworks() {
             ei = cj - 1; // continue after the coordinate cards
         }
     }
+}
+
+void AeroModel::extractCircularSection(const Section& sec) {
+    // Port of circ(): a surface of revolution generated from a meridional
+    // profile (xs, r) and a list of angular positions th (degrees):
+    //   x = xs(i), y = r(i)*cos(th), z = z(i) + r(i)*sin(th).
+    // A section may contain kn network blocks, each introduced by an
+    // "=nopt netname" card.  nopt > 0 expects an "=z" card with an axial
+    // offset per station; the raw-card form without a "=z" label is not
+    // handled yet.
+    struct Block {
+        bool started{false};
+        int nopt{0};
+        std::string name;
+        int nm{0};
+        int nn{0};
+        std::vector<double> xs, r, z, th;
+    };
+
+    int sectionKn = 0;
+    int sectionKt = 0;
+    double sectionCpnorm = 2.0;
+    bool pendingKn = false;
+    bool pendingKt = false;
+
+    auto groupValues = [&](std::size_t index) {
+        std::vector<Value> values = sec.entries[index].values;
+        for (std::size_t j = index + 1;
+             j < sec.entries.size() &&
+             sec.entries[j].kind == EntryKind::FreeData;
+             ++j) {
+            values.insert(values.end(),
+                          sec.entries[j].values.begin(),
+                          sec.entries[j].values.end());
+        }
+        return values;
+    };
+    auto numbers = [](const std::vector<Value>& values) {
+        std::vector<double> out;
+        for (const Value& v : values)
+            if (v.numeric)
+                out.push_back(v.number);
+        return out;
+    };
+
+    Block current;
+    auto finishBlock = [&]() {
+        if (!current.started)
+            return;
+        const bool complete =
+            !current.name.empty() && current.nm > 0 && current.nn > 0 &&
+            static_cast<int>(current.xs.size()) >= current.nm &&
+            static_cast<int>(current.r.size()) >= current.nm &&
+            static_cast<int>(current.th.size()) >= current.nn;
+        if (!complete) {
+            BLOG(warning) << "circular network '" << current.name
+                          << "' is incomplete";
+            current = Block{};
+            return;
+        }
+
+        Network net;
+        net.netname = current.name;
+        net.nm = current.nm;
+        net.nn = current.nn;
+        net.kn = sectionKn;
+        net.kt = sectionKt;
+        net.cpnorm = sectionCpnorm;
+        if (static_cast<int>(current.z.size()) < current.nm)
+            current.z.assign(static_cast<std::size_t>(current.nm), 0.0);
+
+        constexpr double pi = 3.14159265358979323846;
+        const double deg = pi / 180.0;
+        net.coordinates.reserve(
+            static_cast<std::size_t>(3) * current.nm * current.nn);
+        for (int j = 0; j < current.nn; ++j) {
+            const double st = std::sin(current.th[static_cast<std::size_t>(j)] * deg);
+            const double ct = std::cos(current.th[static_cast<std::size_t>(j)] * deg);
+            for (int i = 0; i < current.nm; ++i) {
+                const std::size_t si = static_cast<std::size_t>(i);
+                net.coordinates.push_back(current.xs[si]);
+                net.coordinates.push_back(current.r[si] * ct);
+                net.coordinates.push_back(current.z[si] +
+                                          current.r[si] * st);
+            }
+        }
+        networks.push_back(std::move(net));
+        current = Block{};
+    };
+
+    for (std::size_t ei = 0; ei < sec.entries.size(); ++ei) {
+        const Entry& e = sec.entries[ei];
+        if (e.kind == EntryKind::Variable && !e.names.empty()) {
+            const std::string& first = e.names.front();
+            if (first == "kn") {
+                pendingKn = true;
+            } else if (first == "kt") {
+                pendingKt = true;
+            } else if (first == "nopt") {
+                finishBlock();
+                const std::vector<Value> values = groupValues(ei);
+                current.started = true;
+                for (const Value& v : values) {
+                    if (v.numeric) {
+                        current.nopt = static_cast<int>(
+                            std::lround(v.number));
+                        break;
+                    }
+                }
+                for (const Value& v : values) {
+                    if (!v.numeric) {
+                        current.name = v.text;
+                        break;
+                    }
+                }
+            } else if (first == "nm") {
+                const std::vector<double> values = numbers(groupValues(ei));
+                if (!values.empty())
+                    current.nm = static_cast<int>(
+                        std::lround(values.front()));
+            } else if (first == "xs") {
+                const std::vector<double> values = numbers(groupValues(ei));
+                current.xs.clear();
+                current.r.clear();
+                for (std::size_t k = 0; k + 1 < values.size(); k += 2) {
+                    current.xs.push_back(values[k]);
+                    current.r.push_back(values[k + 1]);
+                }
+            } else if (first == "z") {
+                current.z = numbers(groupValues(ei));
+            } else if (first == "nn") {
+                const std::vector<double> values = numbers(groupValues(ei));
+                if (!values.empty())
+                    current.nn = static_cast<int>(
+                        std::lround(values.front()));
+            } else if (first == "th") {
+                current.th = numbers(groupValues(ei));
+            }
+            continue;
+        }
+        if (e.kind != EntryKind::FreeData)
+            continue;
+
+        if (pendingKn) {
+            const std::vector<double> values = numbers(e.values);
+            if (!values.empty()) {
+                sectionKn = static_cast<int>(
+                    std::lround(values.front()));
+                if (values.size() >= 2)
+                    sectionCpnorm = values.back();
+            }
+            pendingKn = false;
+        } else if (pendingKt) {
+            const std::vector<double> values = numbers(e.values);
+            if (!values.empty())
+                sectionKt = static_cast<int>(
+                    std::lround(values.front()));
+            pendingKt = false;
+        }
+    }
+    finishBlock();
 }
 
 void AeroModel::extractMaterials() {
