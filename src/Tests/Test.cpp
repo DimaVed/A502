@@ -1103,6 +1103,28 @@ TEST_CASE("boundary condition rows: nct=1 and nct=4",
     CHECK_FALSE(a502::buildBoundaryRow(
                     influence, panel.normal, flow, bad, local)
                     .valid);
+
+    const auto controlPoints = a502::buildNetworkControlPoints(net);
+    const auto system = a502::buildNetworkNormalFluxRows(
+        net, flow, globalLayout.network[0], controlPoints, 1.0, 0.0);
+    REQUIRE(system.valid);
+    CHECK(system.nRows == 49);
+    CHECK(system.nSource == 49);
+    CHECK(system.nDoublet == 81);
+    REQUIRE(system.source.rows() == 49);
+    REQUIRE(system.doublet.rows() == 49);
+    REQUIRE(system.rhs.size() == 49);
+    CHECK(system.source.allFinite());
+    CHECK(system.doublet.allFinite());
+    CHECK(system.rhs.allFinite());
+
+    const a502::ControlPoint& firstCenter =
+        controlPoints[static_cast<std::size_t>(
+            system.controlPointIndex[0])];
+    const double expectedRhs =
+        -firstCenter.normal.dot(flow.compd);
+    CHECK(system.rhs(0) ==
+          Catch::Approx(expectedRhs).epsilon(1e-12));
 }
 
 TEST_CASE("control points: single square network", "[controlpoints]") {

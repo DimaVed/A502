@@ -136,4 +136,85 @@ BoundaryRow buildBoundaryRow(
     return out;
 }
 
+BoundaryConditionCoefficients standardNormalMassFlux(
+    double cu, double cl, const Eigen::Vector3d& normal,
+    const Eigen::Vector3d& freestream) {
+    BoundaryConditionCoefficients out;
+    out.nct = 1;
+    out.cu = cu;
+    out.cl = cl;
+    const double nnorm = normal.norm();
+    out.bet = (nnorm > 0.0)
+                  ? -normal.dot(freestream) / nnorm
+                  : 0.0;
+    return out;
+}
+
+BoundarySystemRows buildNetworkNormalFluxRows(
+    const Network& network, const Compressibility& flow,
+    const NetworkSingularityLayout& layout,
+    const std::vector<ControlPoint>& controlPoints, double cu, double cl) {
+    BoundarySystemRows out;
+
+    std::vector<BoundaryRow> rows;
+    std::vector<int> indices;
+    rows.reserve(controlPoints.size());
+    indices.reserve(controlPoints.size());
+
+    for (std::size_t k = 0; k < controlPoints.size(); ++k) {
+        const ControlPoint& cp = controlPoints[k];
+        if (cp.kind != ControlPointKind::PanelCenter)
+            continue;
+
+        const NetworkInfluence raw = evaluateNetworkNearFieldInfluence(
+            network, flow, cp.position, layout);
+        if (!raw.valid)
+            return BoundarySystemRows{};
+
+        GlobalInfluence global;
+        global.source = raw.source;
+        global.doublet = raw.doublet;
+        global.valid = true;
+
+        const LocalSingularityTerms local = buildPanelCenterLocalTerms(
+            network, flow, cp.panelI, cp.panelJ, layout.doublet);
+        if (!local.valid)
+            return BoundarySystemRows{};
+
+        const BoundaryConditionCoefficients bc =
+            standardNormalMassFlux(cu, cl, cp.normal, flow.compd);
+        BoundaryRow row = buildBoundaryRow(
+            global, cp.normal, flow, bc, local);
+        if (!row.valid)
+            return BoundarySystemRows{};
+
+        rows.push_back(std::move(row));
+        indices.push_back(static_cast<int>(k));
+    }
+
+    if (rows.empty())
+        return out;
+
+    out.nRows = static_cast<int>(rows.size());
+    out.nSource = layout.source.count;
+    out.nDoublet = layout.doublet.count;
+    out.source = Eigen::MatrixXd::Zero(out.nRows, out.nSource);
+    out.doublet = Eigen::MatrixXd::Zero(out.nRows, out.nDoublet);
+    out.rhs = Eigen::VectorXd::Zero(out.nRows);
+    out.controlPointIndex = std::move(indices);
+
+    for (int r = 0; r < out.nRows; ++r) {
+        const BoundaryRow& row = rows[static_cast<std::size_t>(r)];
+        if (row.source.size() != out.nSource ||
+            row.doublet.size() != out.nDoublet)
+            return BoundarySystemRows{};
+        out.source.row(r) = row.source.transpose();
+        out.doublet.row(r) = row.doublet.transpose();
+        out.rhs(r) = row.rhs;
+    }
+
+    out.valid = true;
+    return out;
+}
+
 } // namespace a502

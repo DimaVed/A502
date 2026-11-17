@@ -15,6 +15,7 @@
 
 #include <Eigen/Dense>
 
+#include "ControlPoints.h"
 #include "GlobalInfluence.h"
 
 namespace a502 {
@@ -54,5 +55,29 @@ BoundaryRow buildBoundaryRow(
     const Compressibility& flow,
     const BoundaryConditionCoefficients& coefficients,
     const LocalSingularityTerms& local);
+
+// Standard nropt=2 right-hand side: minus the freestream normal component.
+BoundaryConditionCoefficients standardNormalMassFlux(
+    double cu, double cl, const Eigen::Vector3d& normal,
+    const Eigen::Vector3d& freestream);
+
+struct BoundarySystemRows {
+    int nRows{0};
+    int nSource{0};
+    int nDoublet{0};
+    Eigen::MatrixXd source;
+    Eigen::MatrixXd doublet;
+    Eigen::VectorXd rhs;
+    std::vector<int> controlPointIndex; // index into the input list
+    bool valid{false};
+};
+
+// Assemble one normal-mass-flux boundary row per panel-centre control point
+// of a network.  Edge/corner control points require the matching/abutment
+// equations and are not included here.
+BoundarySystemRows buildNetworkNormalFluxRows(
+    const Network& network, const Compressibility& flow,
+    const NetworkSingularityLayout& layout,
+    const std::vector<ControlPoint>& controlPoints, double cu, double cl);
 
 } // namespace a502
