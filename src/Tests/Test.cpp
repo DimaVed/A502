@@ -193,6 +193,83 @@ TEST_CASE("$points: synthetic deck and coordinate order", "[parser][points]") {
     fs::remove(deck, ec);
 }
 
+TEST_CASE("$elliptic: elliptical cross-section grid", "[parser][elliptic]") {
+    const fs::path deck = fs::temp_directory_path() / "a502_ell_test.inp";
+    auto writeDeck = [&](bool withZ) {
+        std::ofstream out(deck);
+        REQUIRE(out.is_open());
+        out << "$elliptic\n"
+               "=kn\n"
+               "1.\n"
+               "=kt\n"
+               "1.\n"
+            << (withZ ? "=nopt netname\n1. ell\n"
+                      : "=nopt netname\n0. ell\n")
+            << "=nm\n"
+               "3.\n"
+               "=xs(1) ri(1) r2(1) xs(2) ri(2) r2(2)\n"
+               "0. 1. 2. 1. 1. 2.\n"
+               "2. 1. 2.\n";
+        if (withZ) {
+            out << "=z(1) z(2) z(3)\n"
+                   "0. 0.5 1.\n";
+        }
+        out << "=nn\n"
+               "3.\n"
+               "=th(1) th(2) th(3)\n"
+               "0. 90. 180.\n";
+    };
+
+    SECTION("flat ellipse") {
+        writeDeck(false);
+        a502::AeroModel model;
+        model.parse(deck.string());
+        REQUIRE(model.networks.size() == 1);
+        const auto& net = model.networks[0];
+        CHECK(net.netname == "ell");
+        CHECK(net.nm == 3);
+        CHECK(net.nn == 3);
+        REQUIRE(net.coordinates.size() == 27);
+
+        auto point = [&](int i, int j) {
+            const std::size_t base =
+                static_cast<std::size_t>(3) * (i + net.nm * j);
+            return Eigen::Vector3d(net.coordinates[base],
+                                   net.coordinates[base + 1],
+                                   net.coordinates[base + 2]);
+        };
+        CHECK(point(0, 0).isApprox(Eigen::Vector3d(0, 1, 0), 1e-14));
+        CHECK(point(0, 1).isApprox(Eigen::Vector3d(0, 0, 2), 1e-14));
+        CHECK(point(0, 2).isApprox(Eigen::Vector3d(0, -1, 0), 1e-14));
+        CHECK(point(2, 0).isApprox(Eigen::Vector3d(2, 1, 0), 1e-14));
+        REQUIRE(model.solve());
+        CHECK(model.totalPanels == 4);
+    }
+
+    SECTION("z offsets") {
+        writeDeck(true);
+        a502::AeroModel model;
+        model.parse(deck.string());
+        REQUIRE(model.networks.size() == 1);
+        const auto& net = model.networks[0];
+        REQUIRE(net.coordinates.size() == 27);
+        auto point = [&](int i, int j) {
+            const std::size_t base =
+                static_cast<std::size_t>(3) * (i + net.nm * j);
+            return Eigen::Vector3d(net.coordinates[base],
+                                   net.coordinates[base + 1],
+                                   net.coordinates[base + 2]);
+        };
+        CHECK(point(0, 0).isApprox(Eigen::Vector3d(0, 1, 0), 1e-14));
+        CHECK(point(1, 0).isApprox(Eigen::Vector3d(1, 1, 0.5), 1e-14));
+        CHECK(point(0, 1).isApprox(Eigen::Vector3d(0, 0, 2), 1e-14));
+        CHECK(point(1, 1).isApprox(Eigen::Vector3d(1, 0, 2.5), 1e-14));
+    }
+
+    std::error_code ec;
+    fs::remove(deck, ec);
+}
+
 TEST_CASE("$quadrilateral: bilinear grid", "[parser][quadrilateral]") {
     const fs::path deck = fs::temp_directory_path() / "a502_quad_test.inp";
     auto writeDeck = [&](const std::string& corners) {

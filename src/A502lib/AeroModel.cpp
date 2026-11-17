@@ -802,6 +802,9 @@ void AeroModel::extractNetworks() {
         else if (sec.keywordNorm == "quadrilateral" ||
                  sec.keywordNorm == "qua")
             extractQuadrilateralSection(sec);
+        else if (sec.keywordNorm == "elliptic" ||
+                 sec.keywordNorm == "ell")
+            extractEllipticalSection(sec);
         else if (sec.keywordNorm == "trailing" || sec.keywordNorm == "tra")
             extractTrailingSection(sec);
     }
@@ -1270,6 +1273,179 @@ void AeroModel::extractQuadrilateralSection(const Section& sec) {
     }
 
     networks.push_back(std::move(net));
+}
+
+void AeroModel::extractEllipticalSection(const Section& sec) {
+    // Port of ellpt(): a body of revolution with elliptical cross-sections.
+    // The profile cards hold (xs, rY, rZ) per station; the angular positions
+    // th (degrees) map to
+    //   y = rY*rZ*cos(th)/den, z = z0 + rY*rZ*sin(th)/den,
+    //   den = sqrt(rZ^2*cos(th)^2 + rY^2*sin(th)^2).
+    struct Block {
+        bool started{false};
+        int nopt{0};
+        std::string name;
+        int nm{0};
+        int nn{0};
+        std::vector<double> xs, ry, rz, z, th;
+    };
+
+    int sectionKn = 0;
+    int sectionKt = 0;
+    double sectionCpnorm = 2.0;
+    bool pendingKn = false;
+    bool pendingKt = false;
+
+    auto groupValues = [&](std::size_t index) {
+        std::vector<Value> values = sec.entries[index].values;
+        for (std::size_t j = index + 1;
+             j < sec.entries.size() &&
+             sec.entries[j].kind == EntryKind::FreeData;
+             ++j) {
+            values.insert(values.end(),
+                          sec.entries[j].values.begin(),
+                          sec.entries[j].values.end());
+        }
+        return values;
+    };
+    auto numbers = [](const std::vector<Value>& values) {
+        std::vector<double> out;
+        for (const Value& v : values)
+            if (v.numeric)
+                out.push_back(v.number);
+        return out;
+    };
+
+    Block current;
+    auto finishBlock = [&]() {
+        if (!current.started)
+            return;
+        const bool complete =
+            !current.name.empty() && current.nm > 0 && current.nn > 0 &&
+            static_cast<int>(current.xs.size()) >= current.nm &&
+            static_cast<int>(current.ry.size()) >= current.nm &&
+            static_cast<int>(current.rz.size()) >= current.nm &&
+            static_cast<int>(current.th.size()) >= current.nn;
+        if (!complete) {
+            BLOG(warning) << "elliptical network '" << current.name
+                          << "' is incomplete";
+            current = Block{};
+            return;
+        }
+
+        Network net;
+        net.netname = current.name;
+        net.nm = current.nm;
+        net.nn = current.nn;
+        net.kn = sectionKn;
+        net.kt = sectionKt;
+        net.cpnorm = sectionCpnorm;
+        if (static_cast<int>(current.z.size()) < current.nm)
+            current.z.assign(static_cast<std::size_t>(current.nm), 0.0);
+
+        constexpr double pi = 3.14159265358979323846;
+        const double deg = pi / 180.0;
+        net.coordinates.reserve(
+            static_cast<std::size_t>(3) * current.nm * current.nn);
+        for (int j = 0; j < current.nn; ++j) {
+            const double st =
+                std::sin(current.th[static_cast<std::size_t>(j)] * deg);
+            const double ct =
+                std::cos(current.th[static_cast<std::size_t>(j)] * deg);
+            for (int i = 0; i < current.nm; ++i) {
+                const std::size_t si = static_cast<std::size_t>(i);
+                const double ry = current.ry[si];
+                const double rz = current.rz[si];
+                const double den =
+                    std::sqrt(rz * rz * ct * ct + ry * ry * st * st);
+                net.coordinates.push_back(current.xs[si]);
+                if (den > 0.0) {
+                    net.coordinates.push_back(ry * rz * ct / den);
+                    net.coordinates.push_back(current.z[si] +
+                                              ry * rz * st / den);
+                } else {
+                    net.coordinates.push_back(0.0);
+                    net.coordinates.push_back(current.z[si]);
+                }
+            }
+        }
+        networks.push_back(std::move(net));
+        current = Block{};
+    };
+
+    for (std::size_t ei = 0; ei < sec.entries.size(); ++ei) {
+        const Entry& e = sec.entries[ei];
+        if (e.kind == EntryKind::Variable && !e.names.empty()) {
+            const std::string& first = e.names.front();
+            if (first == "kn") {
+                pendingKn = true;
+            } else if (first == "kt") {
+                pendingKt = true;
+            } else if (first == "nopt") {
+                finishBlock();
+                const std::vector<Value> values = groupValues(ei);
+                current.started = true;
+                for (const Value& v : values) {
+                    if (v.numeric) {
+                        current.nopt = static_cast<int>(
+                            std::lround(v.number));
+                        break;
+                    }
+                }
+                for (const Value& v : values) {
+                    if (!v.numeric) {
+                        current.name = v.text;
+                        break;
+                    }
+                }
+            } else if (first == "nm") {
+                const std::vector<double> values = numbers(groupValues(ei));
+                if (!values.empty())
+                    current.nm = static_cast<int>(
+                        std::lround(values.front()));
+            } else if (first == "xs") {
+                const std::vector<double> values = numbers(groupValues(ei));
+                current.xs.clear();
+                current.ry.clear();
+                current.rz.clear();
+                for (std::size_t k = 0; k + 2 < values.size(); k += 3) {
+                    current.xs.push_back(values[k]);
+                    current.ry.push_back(values[k + 1]);
+                    current.rz.push_back(values[k + 2]);
+                }
+            } else if (first == "z") {
+                current.z = numbers(groupValues(ei));
+            } else if (first == "nn") {
+                const std::vector<double> values = numbers(groupValues(ei));
+                if (!values.empty())
+                    current.nn = static_cast<int>(
+                        std::lround(values.front()));
+            } else if (first == "th") {
+                current.th = numbers(groupValues(ei));
+            }
+            continue;
+        }
+        if (e.kind != EntryKind::FreeData)
+            continue;
+
+        if (pendingKn) {
+            const std::vector<double> values = numbers(e.values);
+            if (!values.empty()) {
+                sectionKn = static_cast<int>(
+                    std::lround(values.front()));
+                if (values.size() >= 2)
+                    sectionCpnorm = values.back();
+            }
+            pendingKn = false;
+        } else if (pendingKt) {
+            const std::vector<double> values = numbers(e.values);
+            if (!values.empty())
+                sectionKt = static_cast<int>(
+                    std::lround(values.front()));
+            pendingKt = false;
+        }
+    }
+    finishBlock();
 }
 
 void AeroModel::extractTrailingSection(const Section& sec) {

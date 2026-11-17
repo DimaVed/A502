@@ -201,6 +201,7 @@ private:
     void extractPointsSection(const Section& section);
     void extractCircularSection(const Section& section);
     void extractQuadrilateralSection(const Section& section);
+    void extractEllipticalSection(const Section& section);
     void extractTrailingSection(const Section& section);
     void extractMaterials();
     void writeHeader(std::ostream& out) const;
