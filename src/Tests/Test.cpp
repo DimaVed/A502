@@ -10,6 +10,7 @@
 #include "AeroModel.h"
 #include "Compressibility.h"
 #include "PanelGeometry.h"
+#include "PanelParameters.h"
 #include "SubpanelSplines.h"
 #include "TriangleInterpolation.h"
 
@@ -701,4 +702,170 @@ TEST_CASE("triangle interpolation: quadratic map", "[splines][tcof]") {
         (Eigen::Matrix<double, 6, 1>() << -2.0, 0.5, -1.5, 2.0, -3.0, 4.0)
             .finished();
     CHECK((c2 - want2).norm() < 1e-12);
+}
+
+TEST_CASE("panel parameters: canonical points", "[splines][nrpthp]") {
+    const std::vector<double> coords = {
+        0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 1.0, 1.0, 0.0};
+    const a502::PanelGeometry g =
+        a502::buildPanelGeometry(coords, 2, 2, 0, 0);
+    REQUIRE_FALSE(g.degenerate);
+
+    const std::array<Eigen::Vector3d, 4> corners = {
+        g.cp[0], g.cp[1], g.cp[2], g.cp[3]};
+
+    // Canonical (s,t) values (same convention as bqbfun).
+    const double expected[9][2] = {
+        {1, 1},   {-1, 1},  {-1, -1}, {1, -1}, {0, 1},
+        {-1, 0},  {0, -1},  {1, 0},   {0, 0}};
+
+    for (int i = 0; i < 9; ++i) {
+        const auto par = a502::closestPanelParameters(corners, g.cp[i]);
+        INFO("P" << (i + 1));
+        REQUIRE(par.valid);
+        CHECK(par.s == Catch::Approx(expected[i][0]).margin(1e-10));
+        CHECK(par.t == Catch::Approx(expected[i][1]).margin(1e-10));
+    }
+
+    // The same property must hold for a non-planar sample panel.
+    a502::AeroModel model;
+    model.parse(samplePath("swb.inp").string());
+    REQUIRE(model.solve());
+    const auto& gp = model.panels.front().geom;
+    const std::array<Eigen::Vector3d, 4> c2 = {
+        gp.cp[0], gp.cp[1], gp.cp[2], gp.cp[3]};
+    for (int i = 0; i < 9; ++i) {
+        const auto par = a502::closestPanelParameters(c2, gp.cp[i]);
+        INFO("sample P" << (i + 1));
+        REQUIRE(par.valid);
+        CHECK(par.s == Catch::Approx(expected[i][0]).margin(1e-10));
+        CHECK(par.t == Catch::Approx(expected[i][1]).margin(1e-10));
+    }
+}
+
+namespace {
+
+double evaluateDoubletAtGlobal(
+    const a502::PanelGeometry& g,
+    const std::array<a502::DoubletSubpanelSpline, 8>& splines, int s,
+    const Eigen::Vector3d& p, const a502::PanelDoubletValues& v) {
+    const auto& sp = g.subpanels[static_cast<std::size_t>(s)];
+    const Eigen::Matrix3d& frame =
+        sp.scaledValid ? sp.scaledToLocal : sp.toLocal;
+    const auto& spline = splines[static_cast<std::size_t>(s)];
+    const Eigen::Vector3d local = frame * (p - spline.origin);
+    return a502::evaluateDoublet(spline, local.head<2>(), v);
+}
+
+} // namespace
+
+TEST_CASE("doublet subpanel splines: constant and quadratic reproduction",
+          "[splines][doublet]") {
+    const std::vector<double> coords = {
+        0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 1.0, 1.0, 0.0};
+    const a502::PanelGeometry g =
+        a502::buildPanelGeometry(coords, 2, 2, 0, 0);
+    REQUIRE_FALSE(g.degenerate);
+
+    const auto flow = a502::Compressibility::fromAngles(0.6, 0.0, 0.0);
+    const auto splines = a502::buildDoubletSubpanelSplines(g, flow);
+    for (int s = 0; s < 8; ++s)
+        REQUIRE(splines[static_cast<std::size_t>(s)].valid);
+
+    // Constant distribution.
+    a502::PanelDoubletValues ones;
+    ones.setOnes();
+    for (int s = 0; s < 8; ++s) {
+        const auto c = a502::doubletTaylorCoefficients(
+            splines[static_cast<std::size_t>(s)], ones);
+        CHECK(c(0) == Catch::Approx(1.0).epsilon(1e-12));
+        for (int k = 1; k < 6; ++k)
+            CHECK(std::abs(c(k)) < 1e-12);
+    }
+
+    // Quadratic distribution in the inner-panel frame.
+    const Eigen::Matrix3d& innerFrame = g.subpanels[4].scaledToLocal;
+    auto innerLocal = [&](const Eigen::Vector3d& p) {
+        return (innerFrame * (p - g.cp[8])).head<2>();
+    };
+    auto mu = [](const Eigen::Vector2d& q) {
+        return 1.0 + 2.0 * q.x() + 3.0 * q.y() +
+               4.0 * q.x() * q.x() / 2.0 +
+               5.0 * q.x() * q.y() +
+               6.0 * q.y() * q.y() / 2.0;
+    };
+
+    a502::PanelDoubletValues vals;
+    for (int i = 0; i < 9; ++i)
+        vals(i) = mu(innerLocal(g.cp[i]));
+
+    for (int s = 0; s < 8; ++s) {
+        const auto& sp = g.subpanels[static_cast<std::size_t>(s)];
+        for (int k = 0; k < 3; ++k) {
+            const int ci = sp.cpIndex[static_cast<std::size_t>(k)];
+            INFO("subpanel " << s << " vertex " << k);
+            CHECK(evaluateDoubletAtGlobal(g, splines, s,
+                                          g.cp[ci], vals) ==
+                  Catch::Approx(vals(ci)).epsilon(1e-10));
+        }
+        const Eigen::Vector3d centroid =
+            (sp.vertex[0] + sp.vertex[1] + sp.vertex[2]) / 3.0;
+        INFO("subpanel " << s << " centroid");
+        CHECK(evaluateDoubletAtGlobal(g, splines, s, centroid, vals) ==
+              Catch::Approx(mu(innerLocal(centroid))).epsilon(1e-10));
+    }
+
+    // Continuity on shared edges.
+    const Eigen::Vector3d p58 = 0.5 * (g.cp[4] + g.cp[7]);
+    CHECK(evaluateDoubletAtGlobal(g, splines, 0, p58, vals) ==
+          Catch::Approx(evaluateDoubletAtGlobal(g, splines, 4, p58, vals))
+              .epsilon(1e-10));
+    const Eigen::Vector3d p59 = 0.5 * (g.cp[4] + g.cp[8]);
+    CHECK(evaluateDoubletAtGlobal(g, splines, 4, p59, vals) ==
+          Catch::Approx(evaluateDoubletAtGlobal(g, splines, 5, p59, vals))
+              .epsilon(1e-10));
+}
+
+TEST_CASE("doublet subpanel splines: sample panel", "[splines][doublet]") {
+    a502::AeroModel model;
+    model.parse(samplePath("swb.inp").string());
+    REQUIRE(model.solve());
+
+    const auto& g = model.panels.front().geom;
+    const auto splines = a502::buildDoubletSubpanelSplines(g, model.flow);
+    for (int s = 0; s < 8; ++s) {
+        INFO("subpanel " << s);
+        REQUIRE(splines[static_cast<std::size_t>(s)].valid);
+    }
+
+    // Constant and a quadratic in the inner frame.
+    const Eigen::Matrix3d& innerFrame = g.subpanels[4].scaledToLocal;
+    auto innerLocal = [&](const Eigen::Vector3d& p) {
+        return (innerFrame * (p - g.cp[8])).head<2>();
+    };
+    auto mu = [](const Eigen::Vector2d& q) {
+        return -1.0 + 0.5 * q.x() - 2.0 * q.y() +
+               3.0 * q.x() * q.x() / 2.0 -
+               1.5 * q.x() * q.y() +
+               2.5 * q.y() * q.y() / 2.0;
+    };
+
+    a502::PanelDoubletValues vals;
+    for (int i = 0; i < 9; ++i)
+        vals(i) = mu(innerLocal(g.cp[i]));
+
+    for (int s = 0; s < 8; ++s) {
+        const auto& sp = g.subpanels[static_cast<std::size_t>(s)];
+        for (int k = 0; k < 3; ++k) {
+            const int ci = sp.cpIndex[static_cast<std::size_t>(k)];
+            CHECK(evaluateDoubletAtGlobal(g, splines, s, g.cp[ci], vals) ==
+                  Catch::Approx(vals(ci)).epsilon(1e-9));
+        }
+        const Eigen::Vector3d centroid =
+            (sp.vertex[0] + sp.vertex[1] + sp.vertex[2]) / 3.0;
+        CHECK(evaluateDoubletAtGlobal(g, splines, s, centroid, vals) ==
+              Catch::Approx(mu(innerLocal(centroid))).epsilon(1e-9));
+    }
 }

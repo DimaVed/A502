@@ -38,8 +38,31 @@ struct SourceSubpanelSpline {
     bool valid{false};
 };
 
+using PanelDoubletValues = Eigen::Matrix<double, 9, 1>;
+
+struct DoubletSubpanelSpline {
+    // rows: c0, cx, cy, cxx, cxy, cyy in the [1,x,y,x^2/2,xy,y^2/2] basis;
+    // columns: mu at P1..P9
+    Eigen::Matrix<double, 6, 9> coefficients{Eigen::Matrix<double, 6, 9>::Zero()};
+    // Origin of the local coordinates used by the coefficients: the first
+    // triangle corner for outer subpanels, the panel center P9 for inner ones
+    // (as in subpqr).
+    Eigen::Vector3d origin{Eigen::Vector3d::Zero()};
+    bool valid{false};
+};
+
 std::array<SourceSubpanelSpline, 8>
 buildSourceSubpanelSplines(const PanelGeometry& panel);
+
+struct Compressibility;
+
+// Edge-lambda table alam(9,4) of geomc().
+Eigen::Matrix<double, 9, 4> buildAlam(const PanelGeometry& panel,
+                                      const Compressibility& flow);
+
+std::array<DoubletSubpanelSpline, 8>
+buildDoubletSubpanelSplines(const PanelGeometry& panel,
+                            const Compressibility& flow);
 
 // Returns [a0, ax, ay] for the given panel source values.
 Eigen::Vector3d sourceTaylorCoefficients(
@@ -49,5 +72,12 @@ Eigen::Vector3d sourceTaylorCoefficients(
 double evaluateSource(const SourceSubpanelSpline& spline,
                       const Eigen::Vector2d& local,
                       const PanelSourceValues& values);
+
+Eigen::Matrix<double, 6, 1> doubletTaylorCoefficients(
+    const DoubletSubpanelSpline& spline, const PanelDoubletValues& values);
+
+double evaluateDoublet(const DoubletSubpanelSpline& spline,
+                       const Eigen::Vector2d& local,
+                       const PanelDoubletValues& values);
 
 } // namespace a502
