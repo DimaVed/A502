@@ -4968,3 +4968,70 @@ TEST_CASE("default boundary conditions: nlopt1 and nlopt2 rows",
         CHECK(doublet1 > 0.0);
     }
 }
+
+TEST_CASE("network defaults: inbc kt table", "[networkinfluence][kt]") {
+    struct Row {
+        int kt;
+        int sourceType;
+        int doubletType;
+        int ipot;
+        int nlopt1;
+        int nropt1;
+        int nlopt2;
+        int nropt2;
+    };
+    // Values from the inbc() dispatch (labels 610..810).
+    const Row rows[] = {
+        {1, 1, 12, 2, 5, 3, 7, 2},
+        {2, 0, 12, 0, 0, 0, 4, 3},
+        {3, 1, 12, 0, 3, 2, 7, 2},
+        {4, 1, 12, 0, 2, 1, 7, 2},
+        {6, 1, 0, 0, 5, 2, 0, 2},
+        {7, 1, 0, 0, 2, 3, 0, 2},
+        {8, 1, 12, 2, 2, 3, 7, 2},
+        {9, 1, 12, 2, 2, 7, 7, 2},
+        {11, 1, 12, 2, 14, 3, 7, 2},
+        {12, 0, 12, 0, 0, 3, 13, 3},
+        {13, 1, 12, 0, 12, 2, 7, 2},
+        {14, 1, 12, 0, 11, 1, 7, 2},
+        {15, 1, 12, 2, 11, 3, 7, 2},
+        {17, 1, 0, 0, 11, 3, 0, 2},
+        {18, 0, 18, 2, 0, 0, 15, 2},
+        {19, 0, 6, 0, 0, 0, 18, 2},
+        {20, 0, 20, 2, 0, 0, 6, 2},
+        {21, 0, 12, 4, 0, 3, 7, 4},
+    };
+
+    for (const Row& row : rows) {
+        INFO("kt " << row.kt);
+        const auto defaults =
+            a502::networkTypeDefaults(row.kt, 0.3);
+        CHECK(defaults.sourceType == row.sourceType);
+        CHECK(defaults.doubletType == row.doubletType);
+        CHECK(defaults.ipot == row.ipot);
+        CHECK(defaults.nlopt1 == row.nlopt1);
+        CHECK(defaults.nropt1 == row.nropt1);
+        CHECK(defaults.nlopt2 == row.nlopt2);
+        CHECK(defaults.nropt2 == row.nropt2);
+    }
+
+    // kt=5 switches its boundary conditions above Mach 1.
+    const auto baseSub = a502::networkTypeDefaults(5, 0.3);
+    CHECK(baseSub.nlopt1 == 6);
+    CHECK(baseSub.nropt1 == 9);
+    CHECK(baseSub.nlopt2 == 7);
+    CHECK(baseSub.nropt2 == 2);
+    const auto baseSup = a502::networkTypeDefaults(5, 1.5);
+    CHECK(baseSup.nlopt1 == 2);
+    CHECK(baseSup.nropt1 == 2);
+    CHECK(baseSup.nlopt2 == 6);
+    CHECK(baseSup.nropt2 == 2);
+
+    // kt=22 is not accepted by this inbc() dispatch; the port keeps the
+    // documented doublet-only mapping used by other A502 versions.
+    const auto kt22 = a502::networkTypeDefaults(22, 0.3);
+    CHECK(kt22.sourceType == 0);
+    CHECK(kt22.doubletType == 12);
+    CHECK(kt22.nlopt1 == 0);
+    CHECK(kt22.nlopt2 == 7);
+}
