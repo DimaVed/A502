@@ -351,7 +351,7 @@ void AeroModel::writeOut(const std::string& outPath) const {
     if (networks.empty())
         out << "  (none)\n";
     for (const auto& n : networks) {
-        out << "  net '" << n.netname << "'  kn=" << n.kn << "  kt=" << n.kt
+        out << "  net '" << n.netname << "'  kt=" << n.kt
             << "  nm=" << n.nm << "  nn=" << n.nn
             << "  cpnorm=" << n.cpnorm
             << "  coords=" << n.coordinates.size() << "\n";
@@ -428,10 +428,11 @@ void AeroModel::printSummary() const {
         const int nCells =
             (n.nm > 1 && n.nn > 1) ? (n.nm - 1) * (n.nn - 1) : 0;
         BLOG(info) << "  [" << i << "] '" << n.netname << "'"
-                   << "  kn=" << n.kn << " kt=" << n.kt
+                   << "  kt=" << n.kt
                    << "  nm=" << n.nm << " nn=" << n.nn
                    << "  points=" << nPts
-                   << "  quads~=" << nCells;
+                   << "  quads~=" << nCells
+                   << "  (section kn=" << n.kn << ")";
     }
 }
 
@@ -724,75 +725,155 @@ void AeroModel::extractParameters() {
 // grid network extraction ($points sections)
 // ===========================================================================
 
+namespace {
+
+bool entryHasName(const Entry& e, const char* name) {
+    for (const auto& n : e.names)
+        if (n == name)
+            return true;
+    return false;
+}
+
+bool entryAllNumeric(const Entry& e) {
+    if (e.values.empty())
+        return false;
+    for (const auto& v : e.values)
+        if (!v.numeric)
+            return false;
+    return true;
+}
+
+// Card A of a $points network: "nm nn ... netname" (6E10.0,10X,A10).
+// The netname is the only non-numeric token on the card.
+bool parseNetworkCard(const Entry& e, int& nm, int& nn, std::string& netname) {
+    if (e.values.size() < 3)
+        return false;
+    if (!e.values[0].numeric || !e.values[1].numeric)
+        return false;
+    if (e.values.back().numeric)
+        return false;
+
+    nm = static_cast<int>(std::lround(e.values[0].number));
+    nn = static_cast<int>(std::lround(e.values[1].number));
+    netname = e.values.back().text;
+    return nm > 0 && nn > 0 && !netname.empty();
+}
+
+} // namespace
+
 void AeroModel::extractNetworks() {
+    // The original reader (meshp / inbc) consumes a $points section as:
+    //
+    //   kn card      : 6E10.0 (field 1 = kn, field 6 = cpnorm)
+    //   kt card      : 6E10.0 (field 1 = kt, field 5 = amnsw, field 6 = dnsmsh)
+    //   network card : "nm nn ... netname"
+    //   coordinates  : ceil(nm/2) cards per column, 2 points per card
+    //
+    // Modern decks spell the first two cards as "=kn" / "=kt" label cards
+    // followed by their value cards.  Older decks (ellip.inp) put the value
+    // cards directly.  A single $points section may contain several networks;
+    // kn/kt then apply to all of them.
     for (const auto& sec : sections) {
         if (sec.keywordNorm != "points")
             continue;
 
-        // Flatten every data token of the section into a single sequence,
-        // keeping the physical order in which the cards appeared.
-        std::vector<Value> flat;
-        for (const auto& e : sec.entries)
-            flat.insert(flat.end(), e.values.begin(), e.values.end());
+        int    sectionKn = 0;
+        int    sectionKt = 0;
+        double sectionCpnorm = 2.0;
 
-        // Network names (non-numeric tokens such as "ab1", "wingta", "kt5")
-        // delimit the "nm nn netname" triplets.  Every such occurrence starts
-        // the description of one network.
-        std::vector<std::size_t> nameIdx;
-        for (std::size_t i = 0; i < flat.size(); ++i)
-            if (!flat[i].numeric)
-                nameIdx.push_back(i);
+        enum class Header { NeedKn, NeedKt, Done };
+        Header header = Header::NeedKn;
+        bool pendingKn = false;
+        bool pendingKt = false;
 
-        if (nameIdx.empty())
-            continue;
+        for (std::size_t ei = 0; ei < sec.entries.size(); ++ei) {
+            const Entry& e = sec.entries[ei];
 
-        // Section-level kn / kt / cpnorm taken from the leading cards that
-        // precede the first "nm nn netname" triplet.
-        int    kn = 0, kt = 0;
-        double cpnorm = 0.0;
-        {
-            std::size_t first = nameIdx.front();
-            std::vector<double> lead;
-            // The "nm nn" pair (index first-1, first-2) belongs to the first
-            // network, not to the section header, so exclude it here.
-            for (std::size_t i = 0; i + 2 < first; ++i)
-                if (flat[i].numeric)
-                    lead.push_back(flat[i].number);
-            if (!lead.empty()) {
-                kn = static_cast<int>(std::lround(lead.front()));
-                if (lead.size() >= 3) {
-                    cpnorm = lead[1];
-                    kt = static_cast<int>(std::lround(lead.back()));
-                } else {
-                    kt = static_cast<int>(std::lround(lead.back()));
-                }
-            }
-        }
-
-        for (std::size_t k = 0; k < nameIdx.size(); ++k) {
-            std::size_t a = nameIdx[k];
-            if (a < 2 || !flat[a - 1].numeric || !flat[a - 2].numeric) {
-                // A name without its nm/nn pair before it (legacy layout);
-                // skip to keep the model well formed.
+            if (e.kind == EntryKind::Variable) {
+                if (entryHasName(e, "kn"))
+                    pendingKn = true;
+                else if (entryHasName(e, "kt"))
+                    pendingKt = true;
+                // Other "=..." labels (nm/nn/netname, bet1, ...) are skipped.
                 continue;
             }
-            Network n;
-            n.netname = flat[a].text;
-            n.nm = static_cast<int>(std::lround(flat[a - 2].number));
-            n.nn = static_cast<int>(std::lround(flat[a - 1].number));
-            n.kn = kn;
-            n.kt = kt;
-            n.cpnorm = cpnorm;
+            if (e.kind != EntryKind::FreeData)
+                continue;
 
-            // Coordinates of this network run from just after its netname up
-            // to (but excluding) the nm/nn pair of the following network.
-            std::size_t b = (k + 1 < nameIdx.size()) ? nameIdx[k + 1] : flat.size();
-            std::size_t end = (k + 1 < nameIdx.size() && b >= 2) ? b - 2 : b;
-            for (std::size_t i = a + 1; i < end; ++i)
-                if (flat[i].numeric)
-                    n.coordinates.push_back(flat[i].number);
+            // ---- kn card -------------------------------------------------
+            if (header == Header::NeedKn || pendingKn) {
+                if (!entryAllNumeric(e))
+                    continue;
+                sectionKn = static_cast<int>(
+                    std::lround(e.values.front().number));
+                // The cpnorm value sits in the sixth fixed-width field.  After
+                // tokenization the last number is the best available proxy.
+                if (e.values.size() >= 2)
+                    sectionCpnorm = e.values.back().number;
+                header = Header::NeedKt;
+                pendingKn = false;
+                continue;
+            }
 
-            networks.push_back(std::move(n));
+            // ---- kt card -------------------------------------------------
+            if (header == Header::NeedKt || pendingKt) {
+                if (!e.values.empty() && e.values.front().numeric)
+                    sectionKt = static_cast<int>(
+                        std::lround(e.values.front().number));
+                header = Header::Done;
+                pendingKt = false;
+                continue;
+            }
+
+            // ---- network card -------------------------------------------
+            int nm = 0, nn = 0;
+            std::string netname;
+            if (!parseNetworkCard(e, nm, nn, netname))
+                continue;
+
+            Network net;
+            net.netname = netname;
+            net.nm = nm;
+            net.nn = nn;
+            net.kn = sectionKn;
+            net.kt = sectionKt;
+            net.cpnorm = sectionCpnorm;
+
+            const std::size_t needed =
+                static_cast<std::size_t>(nm) * static_cast<std::size_t>(nn) * 3;
+            std::size_t got = 0;
+
+            // Read exactly nm*nn points.  Cards normally hold two points
+            // (six numbers); the last card of an odd column holds one point.
+            // Label cards ("=x y z ...") may sit between the network card and
+            // its coordinates, so skip Variable/Star entries.
+            std::size_t cj = ei + 1;
+            while (cj < sec.entries.size() && got < needed) {
+                const Entry& ce = sec.entries[cj];
+                if (ce.kind == EntryKind::Variable ||
+                    ce.kind == EntryKind::Star) {
+                    ++cj;
+                    continue;
+                }
+                if (ce.kind != EntryKind::FreeData || !entryAllNumeric(ce))
+                    break; // next network card or a control card
+                for (const auto& v : ce.values) {
+                    net.coordinates.push_back(v.number);
+                    ++got;
+                    if (got == needed)
+                        break;
+                }
+                ++cj;
+            }
+
+            if (got != needed) {
+                BLOG(warning) << "network '" << net.netname << "' (nm=" << nm
+                              << ", nn=" << nn << ") has " << (got / 3)
+                              << " coordinate points, expected " << nm * nn;
+            }
+
+            networks.push_back(std::move(net));
+            ei = cj - 1; // continue after the coordinate cards
         }
     }
 }

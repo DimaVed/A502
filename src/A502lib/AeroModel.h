@@ -69,12 +69,12 @@ struct Section {
 // the metadata plus the flat sequence of raw coordinate values.
 struct Network {
     std::string          netname;
-    int                  nm{0};       // points per column
-    int                  nn{0};       // number of columns
-    int                  kn{0};       // boundary condition / network type
-    int                  kt{0};       // panel type
-    double               cpnorm{0.0}; // normal velocity boundary condition
-    std::vector<double>  coordinates; // x,y,z triplets as read
+    int                  nm{0};       // points per column (A502 "m")
+    int                  nn{0};       // number of columns  (A502 "n")
+    int                  kn{0};       // A502 "kn": number of networks in the $points section
+    int                  kt{0};       // A502 panel type code (kt)
+    double               cpnorm{2.0}; // panel normal option (kn card, field 6)
+    std::vector<double>  coordinates; // x,y,z triplets, g = (j-1)*nm + (i-1)
 };
 
 // Reference quantities used for forces & moments accumulation.
