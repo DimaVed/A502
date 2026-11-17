@@ -66,7 +66,7 @@ std::vector<NetworkEdge> buildNetworkEdges(
     return out;
 }
 
-std::vector<EdgeMatch> findFullEdgeMatches(
+std::vector<EdgeMatch> findEdgeMatches(
     const std::vector<NetworkEdge>& edges, double tolerance) {
     std::vector<EdgeMatch> out;
     const double tol = std::max(tolerance, 0.0);
@@ -74,31 +74,73 @@ std::vector<EdgeMatch> findFullEdgeMatches(
         for (std::size_t j = i + 1; j < edges.size(); ++j) {
             const NetworkEdge& a = edges[i];
             const NetworkEdge& b = edges[j];
-            if (a.points.size() != b.points.size() ||
-                a.points.empty())
+            const Eigen::Index na =
+                static_cast<Eigen::Index>(a.points.size());
+            const Eigen::Index nb =
+                static_cast<Eigen::Index>(b.points.size());
+            if (na < 2 || nb < 2)
                 continue;
 
-            bool same = true;
-            bool reversed = true;
-            const std::size_t n = a.points.size();
-            for (std::size_t k = 0; k < n; ++k) {
-                if ((a.points[k] - b.points[k]).norm() > tol)
-                    same = false;
-                if ((a.points[k] - b.points[n - 1 - k]).norm() > tol)
-                    reversed = false;
-                if (!same && !reversed)
-                    break;
+            int bestCount = 0;
+            int bestEndA = 0;
+            int bestEndB = 0;
+            bool bestReversed = false;
+            for (int orientation = 0; orientation < 2; ++orientation) {
+                const bool reversed = orientation == 1;
+                // dp[j] = length of the common chain ending at a[i] and at
+                // the (possibly reversed) b[j].
+                std::vector<int> previous(static_cast<std::size_t>(nb), 0);
+                std::vector<int> current(static_cast<std::size_t>(nb), 0);
+                for (Eigen::Index ai = 0; ai < na; ++ai) {
+                    std::fill(current.begin(), current.end(), 0);
+                    for (Eigen::Index bj = 0; bj < nb; ++bj) {
+                        const Eigen::Index brow = reversed ? nb - 1 - bj : bj;
+                        if ((a.points[static_cast<std::size_t>(ai)] -
+                             b.points[static_cast<std::size_t>(brow)])
+                                .norm() > tol)
+                            continue;
+                        const int diag =
+                            (ai > 0 && bj > 0)
+                                ? previous[static_cast<std::size_t>(bj - 1)]
+                                : 0;
+                        current[static_cast<std::size_t>(bj)] = diag + 1;
+                        if (diag + 1 > bestCount) {
+                            bestCount = diag + 1;
+                            bestEndA = static_cast<int>(ai);
+                            bestEndB = static_cast<int>(bj);
+                            bestReversed = reversed;
+                        }
+                    }
+                    previous.swap(current);
+                }
             }
-            if (!same && !reversed)
+            if (bestCount < 2)
                 continue;
 
             EdgeMatch match;
             match.edgeA = static_cast<int>(i);
             match.edgeB = static_cast<int>(j);
-            match.reversed = !same && reversed;
+            match.reversed = bestReversed;
+            match.count = bestCount;
+            match.startA = bestEndA - bestCount + 1;
+            match.startB = bestReversed
+                               ? static_cast<int>(nb) - 1 - bestEndB
+                               : bestEndB - bestCount + 1;
+            match.partial =
+                !(match.count == static_cast<int>(na) &&
+                  match.count == static_cast<int>(nb));
             out.push_back(match);
         }
     }
+    return out;
+}
+
+std::vector<EdgeMatch> findFullEdgeMatches(
+    const std::vector<NetworkEdge>& edges, double tolerance) {
+    std::vector<EdgeMatch> out;
+    for (const EdgeMatch& match : findEdgeMatches(edges, tolerance))
+        if (!match.partial)
+            out.push_back(match);
     return out;
 }
 
@@ -162,8 +204,7 @@ MatchingRows buildEdgeDoubletMatchingRows(
         const NetworkEdge& b = edges[static_cast<std::size_t>(match.edgeB)];
         if (a.network < 0 || b.network < 0 ||
             a.network >= static_cast<int>(layout.network.size()) ||
-            b.network >= static_cast<int>(layout.network.size()) ||
-            a.points.size() != b.points.size() || a.points.size() < 2)
+            b.network >= static_cast<int>(layout.network.size()))
             return MatchingRows{};
 
         // A502 abtecd() removes source-alone networks (ntd = 0) from the
@@ -182,44 +223,69 @@ MatchingRows buildEdgeDoubletMatchingRows(
         const int offsetB =
             layout.doubletOffset[static_cast<std::size_t>(b.network)];
 
-        const int nIntervals = static_cast<int>(a.points.size()) - 1;
+        // EdgeMatch objects created without start/count describe a complete
+        // edge coincidence (legacy full-edge form).
+        int startIndexA = match.startA;
+        int startIndexB = match.startB;
+        int count = match.count;
+        if (count <= 0) {
+            if (a.points.size() != b.points.size())
+                return MatchingRows{};
+            startIndexA = 0;
+            startIndexB = 0;
+            count = static_cast<int>(a.points.size());
+        }
+        if (count < 2 || startIndexA < 0 || startIndexB < 0 ||
+            startIndexA + count > static_cast<int>(a.points.size()) ||
+            startIndexB + count > static_cast<int>(b.points.size()))
+            return MatchingRows{};
+
+        const int nIntervals = count - 1;
         const int baseA =
             da.edgeMidBase[static_cast<std::size_t>(a.edge - 1)];
         const int baseB =
             db.edgeMidBase[static_cast<std::size_t>(b.edge - 1)];
         for (int k = 0; k < nIntervals; ++k) {
-            const int kb = match.reversed ? (nIntervals - 1 - k) : k;
-            if (!addRow(offsetA + baseA + k, offsetB + baseB + kb))
+            const int indexA = startIndexA + k;
+            const int indexB = match.reversed
+                                   ? startIndexB + nIntervals - 1 - k
+                                   : startIndexB + k;
+            if (!addRow(offsetA + baseA + indexA,
+                        offsetB + baseB + indexB))
                 return MatchingRows{};
         }
 
-        // Endpoint corners.
-        const int startA =
-            da.cornerId[static_cast<std::size_t>(
-                startCorner[static_cast<std::size_t>(a.edge - 1)])];
-        const int endA =
-            da.cornerId[static_cast<std::size_t>(
-                endCorner[static_cast<std::size_t>(a.edge - 1)])];
-        const int startB =
-            db.cornerId[static_cast<std::size_t>(
-                startCorner[static_cast<std::size_t>(b.edge - 1)])];
-        const int endB =
-            db.cornerId[static_cast<std::size_t>(
-                endCorner[static_cast<std::size_t>(b.edge - 1)])];
-
-        const int a0 = offsetA + startA;
-        const int a1 = offsetA + endA;
-        const int b0 = offsetB + startB;
-        const int b1 = offsetB + endB;
-        const std::pair<int, int> p0 =
-            match.reversed ? std::make_pair(a0, b1)
-                           : std::make_pair(a0, b0);
-        const std::pair<int, int> p1 =
-            match.reversed ? std::make_pair(a1, b0)
-                           : std::make_pair(a1, b1);
-        if (!addRow(p0.first, p0.second))
+        // Network corners at the shared chain endpoints.  Interior edge
+        // points of a partial match are not doublet parameters.
+        auto cornerAt = [&](const NetworkEdge& edge,
+                            const NetworkDoubletParameters& parameters,
+                            int pointIndex) -> int {
+            if (edge.edge < 1 || edge.edge > 4)
+                return -1;
+            const int last =
+                static_cast<int>(edge.points.size()) - 1;
+            if (pointIndex == 0)
+                return parameters.cornerId[static_cast<std::size_t>(
+                    startCorner[static_cast<std::size_t>(edge.edge - 1)])];
+            if (pointIndex == last)
+                return parameters.cornerId[static_cast<std::size_t>(
+                    endCorner[static_cast<std::size_t>(edge.edge - 1)])];
+            return -1;
+        };
+        auto cornerPair = [&](int indexA, int indexB) {
+            const int cornerA = cornerAt(a, da, indexA);
+            const int cornerB = cornerAt(b, db, indexB);
+            if (cornerA < 0 || cornerB < 0)
+                return true;
+            return addRow(offsetA + cornerA, offsetB + cornerB);
+        };
+        const int startBIndex =
+            match.reversed ? startIndexB + count - 1 : startIndexB;
+        const int endBIndex =
+            match.reversed ? startIndexB : startIndexB + count - 1;
+        if (!cornerPair(startIndexA, startBIndex))
             return MatchingRows{};
-        if (!addRow(p1.first, p1.second))
+        if (!cornerPair(startIndexA + count - 1, endBIndex))
             return MatchingRows{};
     }
 

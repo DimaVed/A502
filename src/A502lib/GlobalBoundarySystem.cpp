@@ -80,7 +80,7 @@ GlobalBoundarySystem buildGlobalNormalFluxSystem(
 
     const std::vector<NetworkEdge> edges = buildNetworkEdges(networks);
     const std::vector<EdgeMatch> matches =
-        findFullEdgeMatches(edges, matchingTolerance);
+        findEdgeMatches(edges, matchingTolerance);
     MatchingRows matching;
     if (!matches.empty()) {
         matching = buildEdgeDoubletMatchingRows(networks, layout, matches);
@@ -293,7 +293,7 @@ GlobalEquationAudit auditGlobalEquationCounts(
 
     const std::vector<NetworkEdge> edges = buildNetworkEdges(networks);
     const std::vector<EdgeMatch> matches =
-        findFullEdgeMatches(edges, matchingTolerance);
+        findEdgeMatches(edges, matchingTolerance);
     if (!matches.empty()) {
         const MatchingRows rows =
             buildEdgeDoubletMatchingRows(networks, layout, matches);

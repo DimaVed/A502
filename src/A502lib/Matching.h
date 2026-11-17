@@ -35,8 +35,20 @@ struct EdgeMatch {
     int edgeA{0}; // index into the NetworkEdge list
     int edgeB{0};
     bool reversed{false};
+    // Common contiguous point chain: A points startA..startA+count-1 and,
+    // when reversed, B points startB..startB+count-1 in reverse order.
+    int startA{0};
+    int startB{0};
+    int count{0};
+    bool partial{false}; // one or both edges extend beyond the shared chain
 };
 
+// Longest common contiguous point chain of at least two points for each
+// edge pair.  Full-edge coincidences are returned with partial=false.
+std::vector<EdgeMatch> findEdgeMatches(
+    const std::vector<NetworkEdge>& edges, double tolerance);
+
+// Full-edge coincidences only (same point count, entire edges shared).
 std::vector<EdgeMatch> findFullEdgeMatches(
     const std::vector<NetworkEdge>& edges, double tolerance);
 

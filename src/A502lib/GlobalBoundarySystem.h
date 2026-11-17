@@ -4,7 +4,7 @@
 // ----------------------
 // Assemble the first global system from:
 //   * one standard normal-mass-flux row per panel-centre control point;
-//   * full-edge doublet matching rows.
+//   * full-edge and partial-edge doublet matching rows.
 // Inactive source/doublet types are removed from the unknown vector using
 // the kt mapping stored in GlobalSingularityLayout.
 

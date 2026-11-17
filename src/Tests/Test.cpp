@@ -1791,6 +1791,110 @@ TEST_CASE("matching: shared full edge", "[matching]") {
     CHECK(rows.doublet(0, baseB) == Catch::Approx(-1.0).epsilon(1e-14));
 }
 
+TEST_CASE("matching: partial shared edge chain", "[matching]") {
+    auto makeA = [] {
+        a502::Network net;
+        net.netname = "a";
+        net.nm = 6;
+        net.nn = 4;
+        for (int n = 0; n < 4; ++n) {
+            for (int m = 0; m < 6; ++m) {
+                net.coordinates.push_back(static_cast<double>(m));
+                net.coordinates.push_back(static_cast<double>(n));
+                net.coordinates.push_back(0.0);
+            }
+        }
+        return net;
+    };
+    auto makeB = [](bool reversed) {
+        a502::Network net;
+        net.netname = "b";
+        net.nm = 4;
+        net.nn = 4;
+        for (int n = 0; n < 4; ++n) {
+            for (int m = 0; m < 4; ++m) {
+                const double x = reversed ? 4.0 - static_cast<double>(m)
+                                          : 1.0 + static_cast<double>(m);
+                net.coordinates.push_back(x);
+                net.coordinates.push_back(3.0 + static_cast<double>(n));
+                net.coordinates.push_back(0.0);
+            }
+        }
+        return net;
+    };
+
+    auto checkRows = [](const std::vector<a502::Network>& networks,
+                        const a502::EdgeMatch& match) {
+        const auto edges = a502::buildNetworkEdges(networks);
+        CHECK(a502::findFullEdgeMatches(edges, 1e-10).empty());
+        const auto layout =
+            a502::buildGlobalSingularityLayout(networks);
+        REQUIRE(layout.totalDoublet == 60);
+        const auto rows = a502::buildEdgeDoubletMatchingRows(
+            networks, layout, {match});
+        REQUIRE(rows.valid);
+        CHECK(rows.nRows == 3);
+        for (int r = 0; r < rows.nRows; ++r)
+            CHECK(rows.doublet.row(r).cwiseAbs().sum() ==
+                  Catch::Approx(2.0).epsilon(1e-14));
+        Eigen::FullPivLU<Eigen::MatrixXd> lu(rows.doublet);
+        CHECK(lu.rank() == rows.nRows);
+
+        const int baseA =
+            layout.network[0].doublet.edgeMidBase[1];
+        const int baseB = 35 +
+            layout.network[1].doublet.edgeMidBase[3];
+        // Interval indices range over the count-1 shared intervals.
+        const int bFirst = match.reversed
+                               ? match.startB + match.count - 2
+                               : match.startB;
+        const int bLast = match.reversed
+                              ? match.startB
+                              : match.startB + match.count - 2;
+        CHECK(rows.doublet(0, baseA + match.startA) ==
+              Catch::Approx(1.0).epsilon(1e-14));
+        CHECK(rows.doublet(0, baseB + bFirst) ==
+              Catch::Approx(-1.0).epsilon(1e-14));
+        CHECK(rows.doublet(2, baseA + match.startA + 2) ==
+              Catch::Approx(1.0).epsilon(1e-14));
+        CHECK(rows.doublet(2, baseB + bLast) ==
+              Catch::Approx(-1.0).epsilon(1e-14));
+    };
+
+    SECTION("same direction") {
+        const std::vector<a502::Network> networks = {makeA(), makeB(false)};
+        const auto edges = a502::buildNetworkEdges(networks);
+        REQUIRE(edges.size() == 8);
+        const auto matches = a502::findEdgeMatches(edges, 1e-10);
+        REQUIRE(matches.size() == 1);
+        const auto& match = matches[0];
+        CHECK(edges[static_cast<std::size_t>(match.edgeA)].network == 0);
+        CHECK(edges[static_cast<std::size_t>(match.edgeA)].edge == 2);
+        CHECK(edges[static_cast<std::size_t>(match.edgeB)].network == 1);
+        CHECK(edges[static_cast<std::size_t>(match.edgeB)].edge == 4);
+        CHECK_FALSE(match.reversed);
+        CHECK(match.partial);
+        CHECK(match.startA == 1);
+        CHECK(match.startB == 0);
+        CHECK(match.count == 4);
+        checkRows(networks, match);
+    }
+
+    SECTION("reversed direction") {
+        const std::vector<a502::Network> networks = {makeA(), makeB(true)};
+        const auto edges = a502::buildNetworkEdges(networks);
+        const auto matches = a502::findEdgeMatches(edges, 1e-10);
+        REQUIRE(matches.size() == 1);
+        const auto& match = matches[0];
+        CHECK(match.reversed);
+        CHECK(match.partial);
+        CHECK(match.startA == 1);
+        CHECK(match.startB == 0);
+        CHECK(match.count == 4);
+        checkRows(networks, match);
+    }
+}
+
 TEST_CASE("matching: source-only networks do not match doublets",
           "[matching]") {
     auto makeGrid = [](double y0, int kt, const char* name) {
