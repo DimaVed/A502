@@ -52,7 +52,22 @@ struct PanelNearFieldInfluence {
 };
 
 // Only the quadratic (nf=6) panel splines are currently available.
+// The panel must already have compressibility-scaled subpanel frames
+// (applyCompressibleFrames), as built by AeroModel::solve().
 PanelNearFieldInfluence subsonicPanelNearFieldInfluence(
+    const PanelGeometry& panel, const Compressibility& flow,
+    const Eigen::Vector3d& fieldPoint, int nf = 6);
+
+// Quasi-far (intermediate) influence of qffcal(): one quadrilateral/panel
+// frame evaluation instead of the eight subpanel calls.  The result maps
+// the panel Taylor coefficients to the field point.
+struct PanelIntermediateInfluence {
+    Eigen::Matrix<double, 4, 6> source{Eigen::Matrix<double, 4, 6>::Zero()};
+    Eigen::Matrix<double, 4, 10> doublet{Eigen::Matrix<double, 4, 10>::Zero()};
+    bool valid{false};
+};
+
+PanelIntermediateInfluence subsonicPanelIntermediateInfluence(
     const PanelGeometry& panel, const Compressibility& flow,
     const Eigen::Vector3d& fieldPoint, int nf = 6);
 

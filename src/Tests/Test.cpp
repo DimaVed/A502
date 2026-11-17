@@ -629,6 +629,7 @@ TEST_CASE("subsonic near-field influence: whole panel", "[nearfield]") {
     double sourceVy = 0.0;
     double sourceVz = 0.0;
     double constantSourcePotential = 0.0;
+    double doubletPotential = 0.0;
     double constantDoubletPotential = 0.0;
 
     for (int j = 0; j < 8; ++j) {
@@ -648,8 +649,10 @@ TEST_CASE("subsonic near-field influence: whole panel", "[nearfield]") {
             sourceVy += w * s * ry / (fourPi * r2 * r);
             sourceVz += w * s * rz / (fourPi * r2 * r);
             constantSourcePotential -= w / (fourPi * r);
-            constantDoubletPotential +=
+            doubletPotential +=
                 w * mu(p) * normalZ * rz / (fourPi * r2 * r);
+            constantDoubletPotential +=
+                w * normalZ * rz / (fourPi * r2 * r);
         }
     }
 
@@ -676,6 +679,16 @@ TEST_CASE("subsonic near-field influence: whole panel", "[nearfield]") {
 
     const double doubletHit = (infl.doublet * muValues)(0);
     CHECK(doubletHit ==
+          Catch::Approx(doubletPotential).epsilon(1e-7));
+
+    // The intermediate (quasi-far) single-panel evaluation must also be
+    // exact for constant source and doublet distributions.
+    const auto intermediate =
+        a502::subsonicPanelIntermediateInfluence(panel, flow, x, 6);
+    REQUIRE(intermediate.valid);
+    CHECK(intermediate.source(0, 0) ==
+          Catch::Approx(constantSourcePotential).epsilon(1e-7));
+    CHECK(intermediate.doublet(0, 0) ==
           Catch::Approx(constantDoubletPotential).epsilon(1e-7));
 }
 

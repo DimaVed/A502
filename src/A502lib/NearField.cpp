@@ -362,4 +362,55 @@ PanelNearFieldInfluence subsonicPanelNearFieldInfluence(
     return out;
 }
 
+PanelIntermediateInfluence subsonicPanelIntermediateInfluence(
+    const PanelGeometry& panel, const Compressibility& flow,
+    const Eigen::Vector3d& fieldPoint, int nf) {
+    PanelIntermediateInfluence out;
+    if (panel.degenerate || nf != 6)
+        return out;
+
+    const SubpanelGeometry& inner = panel.subpanels[4];
+    if (!inner.scaledValid)
+        return out;
+
+    const Eigen::Matrix3d& frame = inner.scaledToLocal;
+    const Eigen::Vector3d origin = panel.cp[8];
+    std::array<Eigen::Vector3d, 4> vertices{};
+    for (int k = 0; k < 4; ++k)
+        vertices[static_cast<std::size_t>(k)] =
+            frame * (panel.cp[static_cast<std::size_t>(k)] - origin);
+
+    const Eigen::Vector3d localField = frame * (fieldPoint - origin);
+    const SubsonicSubpanelInfluence infl = subsonicSubpanelInfluence(
+        vertices, 4, panel.collapsedEdge, 3, localField, inner.jacobian, nf);
+    if (!infl.valid)
+        return out;
+
+    out.source = infl.source;
+    out.doublet = infl.doublet;
+
+    // Local -> global velocity transformation.
+    for (int col = 0; col < 6; ++col) {
+        const Eigen::Vector3d v =
+            inner.scaledToGlobal *
+            Eigen::Vector3d(out.source(1, col), out.source(2, col),
+                            out.source(3, col));
+        out.source(1, col) = v.x();
+        out.source(2, col) = v.y();
+        out.source(3, col) = v.z();
+    }
+    for (int col = 0; col < 10; ++col) {
+        const Eigen::Vector3d v =
+            inner.scaledToGlobal *
+            Eigen::Vector3d(out.doublet(1, col), out.doublet(2, col),
+                            out.doublet(3, col));
+        out.doublet(1, col) = v.x();
+        out.doublet(2, col) = v.y();
+        out.doublet(3, col) = v.z();
+    }
+
+    out.valid = true;
+    return out;
+}
+
 } // namespace a502
