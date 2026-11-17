@@ -27,12 +27,16 @@ bool isUsableGlobalSystem(const GlobalBoundarySystem& system) {
 
 } // namespace
 
-GlobalBoundarySystem buildGlobalNormalFluxSystem(
+namespace {
+
+GlobalBoundarySystem buildGlobalNormalFluxSystemImpl(
     const std::vector<Network>& networks, const Compressibility& flow,
     const GlobalSingularityLayout& layout, double cu, double cl,
-    double matchingTolerance, bool includeEdgeAndCorner) {
+    double matchingTolerance,
+    const std::vector<bool>& includeEdgeAndCorner) {
     GlobalBoundarySystem out;
-    if (networks.empty() || layout.network.size() != networks.size())
+    if (networks.empty() || layout.network.size() != networks.size() ||
+        includeEdgeAndCorner.size() != networks.size())
         return out;
 
     std::vector<BoundaryRow> bcRows;
@@ -45,7 +49,7 @@ GlobalBoundarySystem buildGlobalNormalFluxSystem(
             buildNetworkControlPoints(net);
 
         for (const ControlPoint& cp : controlPoints) {
-            if (!includeEdgeAndCorner &&
+            if (!includeEdgeAndCorner[k] &&
                 cp.kind != ControlPointKind::PanelCenter)
                 continue;
 
@@ -151,6 +155,28 @@ GlobalBoundarySystem buildGlobalNormalFluxSystem(
 
     out.valid = true;
     return out;
+}
+
+} // namespace
+
+GlobalBoundarySystem buildGlobalNormalFluxSystem(
+    const std::vector<Network>& networks, const Compressibility& flow,
+    const GlobalSingularityLayout& layout, double cu, double cl,
+    double matchingTolerance, bool includeEdgeAndCorner) {
+    const std::vector<bool> perNetwork(networks.size(),
+                                       includeEdgeAndCorner);
+    return buildGlobalNormalFluxSystemImpl(
+        networks, flow, layout, cu, cl, matchingTolerance, perNetwork);
+}
+
+GlobalBoundarySystem buildGlobalNormalFluxSystem(
+    const std::vector<Network>& networks, const Compressibility& flow,
+    const GlobalSingularityLayout& layout, double cu, double cl,
+    double matchingTolerance,
+    const std::vector<bool>& includeEdgeAndCorner) {
+    return buildGlobalNormalFluxSystemImpl(
+        networks, flow, layout, cu, cl, matchingTolerance,
+        includeEdgeAndCorner);
 }
 
 GlobalSystemScaling buildGlobalSystemScaling(

@@ -37,6 +37,14 @@ GlobalBoundarySystem buildGlobalNormalFluxSystem(
     const GlobalSingularityLayout& layout, double cu, double cl,
     double matchingTolerance, bool includeEdgeAndCorner = false);
 
+// Same assembly with a per-network choice between panel-centre-only and
+// all-control-point boundary rows.
+GlobalBoundarySystem buildGlobalNormalFluxSystem(
+    const std::vector<Network>& networks, const Compressibility& flow,
+    const GlobalSingularityLayout& layout, double cu, double cl,
+    double matchingTolerance,
+    const std::vector<bool>& includeEdgeAndCorner);
+
 // Diagonal row/column equilibration of the global matrix:
 //   A_scaled = diag(row) * A * diag(column),
 //   b_scaled = diag(row) * b,

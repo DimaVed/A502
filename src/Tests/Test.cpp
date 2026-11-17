@@ -2848,7 +2848,7 @@ TEST_CASE("AeroModel: first end-to-end flow solve", "[aeromodel][flowsolve]") {
         CHECK_FALSE(model.isFlowSolved());
     }
 
-    SECTION("multiple networks are refused") {
+    SECTION("multiple independent networks") {
         a502::AeroModel model = makeModel(12);
         a502::Network second = model.networks.front();
         second.netname = "grid2";
@@ -2856,6 +2856,35 @@ TEST_CASE("AeroModel: first end-to-end flow solve", "[aeromodel][flowsolve]") {
             second.coordinates[k] += 10.0;
         model.networks.push_back(second);
         REQUIRE(model.solve());
+        REQUIRE(model.solveFlow());
+        CHECK(model.isFlowSolved());
+        CHECK(model.panels.size() == 18);
+    }
+
+    SECTION("mixed independent networks") {
+        a502::AeroModel model = makeModel(7);
+        a502::Network second = model.networks.front();
+        second.netname = "grid2";
+        second.kt = 12;
+        for (std::size_t k = 0; k < second.coordinates.size(); k += 3)
+            second.coordinates[k] += 10.0;
+        model.networks.push_back(second);
+        REQUIRE(model.solve());
+        REQUIRE(model.solveFlow());
+        CHECK(model.isFlowSolved());
+        CHECK(model.panels.size() == 18);
+    }
+
+    SECTION("matched doublet networks are refused") {
+        a502::AeroModel model = makeModel(12);
+        a502::Network second = model.networks.front();
+        second.netname = "grid2";
+        for (std::size_t k = 1; k < second.coordinates.size(); k += 3)
+            second.coordinates[k] += 3.0;
+        model.networks.push_back(second);
+        REQUIRE(model.solve());
+        // Equality rows for the shared edge make the system non-square
+        // until the redundant parameters are eliminated.
         CHECK_FALSE(model.solveFlow());
     }
 }

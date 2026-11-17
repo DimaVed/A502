@@ -177,13 +177,15 @@ public:
     bool solve();                  // false if the model has no usable grid
     bool isSolved() const;         // true after a successful solve()
 
-    // First end-to-end singularity solve after solve().  Supported for a
-    // single network with exactly one active singularity type
-    // (source-only or doublet-only).  It uses the current simplified
-    // normal-mass-flux row set (cu = cl = 1, nropt = 2), not the full
-    // bconcl/bcopt per-kt defaults, and writes the resulting linear Cp into
-    // Panel::cp.  Returns false and leaves the placeholder Cp untouched for
-    // composite/multi-network systems or when the system is not solvable.
+    // First end-to-end singularity solve after solve().  Supported when
+    // every network has exactly one active singularity type (source-only or
+    // doublet-only) and the assembled system is square and solvable; this
+    // excludes composite networks and matched doublet networks whose
+    // equivalence classes are not yet eliminated.  It uses the current
+    // simplified normal-mass-flux row set (cu = cl = 1, nropt = 2), not the
+    // full bconcl/bcopt per-kt defaults, and writes the resulting linear Cp
+    // into Panel::cp.  Returns false and leaves the placeholder Cp untouched
+    // when the system is not solvable.
     bool solveFlow();
     bool isFlowSolved() const;
 

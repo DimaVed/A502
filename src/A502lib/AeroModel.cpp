@@ -1775,6 +1775,7 @@ bool AeroModel::solve() {
     // Panel order is the A502 order (geomc): columns outer, rows inner:
     //   panel index = i + (nm-1)*j.
     panels.clear();
+    controlPoints.clear();
     totalSurfaceArea = 0.0;
     totalPanels = 0;
     std::size_t skipped = 0;
@@ -1848,80 +1849,113 @@ bool AeroModel::isFlowSolved() const {
 
 bool AeroModel::solveFlow() {
     flowSolved_ = false;
-    if (!solved_ || networks.size() != 1)
-        return false;
-
-    const Network& net = networks.front();
-    if (net.nm < 2 || net.nn < 2)
+    if (!solved_ || networks.empty())
         return false;
 
     const std::vector<Network>& nets = networks;
     const GlobalSingularityLayout layout =
         buildGlobalSingularityLayout(nets);
-    if (layout.network.size() != 1)
+    if (layout.network.size() != nets.size()) {
+        BLOG(warning) << "solveFlow(): singularity layout failed";
         return false;
+    }
 
-    const bool sourceOnly =
-        layout.activeSource > 0 && layout.activeDoublet == 0;
-    const bool doubletOnly =
-        layout.activeDoublet > 0 && layout.activeSource == 0;
-    if (!sourceOnly && !doubletOnly)
-        return false;
+    // Source-only networks have one unknown per panel and use panel-centre
+    // rows.  Doublet-only networks use the staggered parameter grid, whose
+    // cardinality equals the number of control points.  Composite networks
+    // are still under-determined.
+    std::vector<bool> includeEdgeAndCorner(nets.size(), false);
+    for (std::size_t k = 0; k < nets.size(); ++k) {
+        const NetworkSingularityLayout& netLayout = layout.network[k];
+        const bool sourceOnly = netLayout.hasSource && !netLayout.hasDoublet;
+        const bool doubletOnly = netLayout.hasDoublet && !netLayout.hasSource;
+        if (!sourceOnly && !doubletOnly) {
+            BLOG(warning) << "solveFlow(): network '" << nets[k].netname
+                          << "' is composite";
+            return false;
+        }
+        if (nets[k].nm < 2 || nets[k].nn < 2)
+            return false;
+        includeEdgeAndCorner[k] = doubletOnly;
+    }
 
-    // Source-only networks have one unknown per panel and use the panel
-    // centre rows.  Doublet-only networks use the staggered parameter grid,
-    // whose cardinality equals the number of control points.
-    const bool includeEdgeAndCorner = doubletOnly;
     const GlobalBoundarySystem system = buildGlobalNormalFluxSystem(
         nets, flow, layout, 1.0, 1.0, 1.0e-10, includeEdgeAndCorner);
-    if (!system.valid)
+    if (!system.valid) {
+        BLOG(warning) << "solveFlow(): boundary system assembly failed";
         return false;
+    }
 
     const GlobalSystemSolution solution =
         solveGlobalBoundarySystem(system);
-    if (!solution.valid)
+    if (!solution.valid) {
+        const auto diagnostics = analyzeGlobalBoundarySystem(system);
+        BLOG(warning) << "solveFlow(): global solve failed (rows="
+                      << system.nRows << ", cols=" << system.nColumns
+                      << ", rank=" << diagnostics.rank << ")";
         return false;
+    }
 
     const GlobalParameterValues values =
         expandGlobalSolution(solution, layout);
-    if (!values.valid)
+    if (!values.valid) {
+        BLOG(warning) << "solveFlow(): solution expansion failed";
         return false;
+    }
 
     const SurfaceFlowResult surface = evaluateSurfaceFlow(
-        nets, flow, layout, values, includeEdgeAndCorner);
-    if (!surface.valid)
+        nets, flow, layout, values, true);
+    if (!surface.valid) {
+        BLOG(warning) << "solveFlow(): surface flow evaluation failed";
         return false;
+    }
 
-    // evaluateSurfaceFlow walks the same control-point order, applying the
-    // same centre-only filter, so build the panel-centre lookup directly.
-    std::vector<int> centerIndex(
-        static_cast<std::size_t>((net.nm - 1) * (net.nn - 1)), -1);
+    // evaluateSurfaceFlow walks the same all-control-point order as
+    // AeroModel::controlPoints, so record each network's panel-centre row.
+    std::vector<std::vector<int>> centerIndex(nets.size());
+    for (std::size_t k = 0; k < nets.size(); ++k)
+        centerIndex[k].assign(
+            static_cast<std::size_t>((nets[k].nm - 1) *
+                                     (nets[k].nn - 1)),
+            -1);
     std::size_t surfaceIndex = 0;
     for (const ControlPoint& cp : controlPoints) {
-        if (!includeEdgeAndCorner &&
-            cp.kind != ControlPointKind::PanelCenter)
-            continue;
-        if (cp.kind == ControlPointKind::PanelCenter)
-            centerIndex[static_cast<std::size_t>(cp.panelIndex)] =
-                static_cast<int>(surfaceIndex);
+        if (cp.kind == ControlPointKind::PanelCenter &&
+            cp.network >= 0 &&
+            cp.network < static_cast<int>(centerIndex.size())) {
+            std::vector<int>& index =
+                centerIndex[static_cast<std::size_t>(cp.network)];
+            if (cp.panelIndex >= 0 &&
+                cp.panelIndex < static_cast<int>(index.size()))
+                index[static_cast<std::size_t>(cp.panelIndex)] =
+                    static_cast<int>(surfaceIndex);
+        }
         ++surfaceIndex;
     }
-    if (surfaceIndex != surface.cp.size())
+    if (surfaceIndex != surface.cp.size()) {
+        BLOG(warning) << "solveFlow(): control-point index mismatch ("
+                      << surfaceIndex << " vs " << surface.cp.size()
+                      << ")";
         return false;
+    }
 
     for (Panel& panel : panels) {
-        const int panelIndex = panel.panelI + (net.nm - 1) * panel.panelJ;
-        if (panelIndex < 0 ||
-            panelIndex >= static_cast<int>(centerIndex.size()))
+        if (panel.network < 0 ||
+            panel.network >= static_cast<int>(nets.size()))
             continue;
-        const int si = centerIndex[static_cast<std::size_t>(panelIndex)];
+        const Network& net = nets[static_cast<std::size_t>(panel.network)];
+        const std::vector<int>& index =
+            centerIndex[static_cast<std::size_t>(panel.network)];
+        const int panelIndex = panel.panelI + (net.nm - 1) * panel.panelJ;
+        if (panelIndex < 0 || panelIndex >= static_cast<int>(index.size()))
+            continue;
+        const int si = index[static_cast<std::size_t>(panelIndex)];
         if (si >= 0)
             panel.cp = surface.cp[static_cast<std::size_t>(si)];
     }
 
     flowSolved_ = true;
-    BLOG(info) << "solveFlow(): " << (sourceOnly ? "source" : "doublet")
-               << "-only network '" << net.netname << "', unknowns="
+    BLOG(info) << "solveFlow(): " << nets.size() << " network(s), unknowns="
                << solution.unknowns.size()
                << ", residual=" << solution.residualNorm;
     return true;

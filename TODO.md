@@ -44,8 +44,9 @@
   - прямой LU-solve с iterative refinement;
   - minimum-norm gauge (COD) для вырожденных/прямоугольных систем;
   - восстановление полного вектора параметров;
-  - первый end-to-end `AeroModel::solveFlow()` для одиночной
-    source-only/doublet-only сети.
+  - первый end-to-end `AeroModel::solveFlow()` для независимых
+    source-only/doublet-only сетей (несколько сетей, per-network выбор
+    контрольных точек).
 - Постпроцессинг:
   - поверхностные скорости;
   - `cpcal`-формулы: linear/slender/second-order/isentropic;
@@ -89,10 +90,11 @@
     обусловлено).
 - Материалы парсятся и дают `Cp`-ratios, но ещё не подключены к AIC/BC
   и к выбору формулы `Cp` по сети/поверхности при постпроцессинге.
-- `AeroModel::solveFlow()` — только одиночная source-only/doublet-only
-  сеть, упрощённый normal-flux BC (`cu=cl=1`, `nropt=2`); composite и
-  несколько сетей пока не решаются, `Panel.cp` при отказе остаётся
-  заглушкой.
+- `AeroModel::solveFlow()` — только независимые source-only/doublet-only
+  сети с квадратной системой; composite-сети и doublet-сети с
+  matching-строками (до elimination) не решаются.  Используется
+  упрощённый normal-flux BC (`cu=cl=1`, `nropt=2`), не полные
+  `bconcl`/`bcopt` defaults; `Panel.cp` при отказе остаётся заглушкой.
 - Из генераторов геометрии есть `$circular`, `$trailing`,
   `$quadrilateral` и `$elliptic`; нет `$gothic`.  В `$circular`/
   `$elliptic` не поддержан вариант `nopt>0` с z-картами без заголовка
