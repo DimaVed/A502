@@ -40,4 +40,13 @@ struct NearPlane {
 // surfit(): near-plane coordinate transform relative to the panel center.
 NearPlane buildNearPlane(const std::array<Eigen::Vector3d, 4>& corners);
 
+// ccaln()/panmom(): area moments of the panel polygon projected onto the
+// local x-y plane:
+//   c(i,j) = integral x^(i-1) y^(j-1) dA,  i,j = 1..degree+1.
+// ics is the skipped (collapsed) corner, 0 for a quadrilateral.  The vertex
+// order must be counterclockwise for a positive area.
+Eigen::MatrixXd panelAreaMoments(
+    const std::array<Eigen::Vector3d, 4>& vertices, int nside, int ics,
+    int degree);
+
 } // namespace a502

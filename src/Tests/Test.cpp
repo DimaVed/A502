@@ -3338,6 +3338,62 @@ TEST_CASE("source subpanel splines: sample panel", "[splines][source]") {
     }
 }
 
+TEST_CASE("panel moments: polygon integration", "[panelmoments]") {
+    auto factorial = [](int n) {
+        double f = 1.0;
+        for (int k = 2; k <= n; ++k)
+            f *= k;
+        return f;
+    };
+
+    // Unit square: integral x^(i-1) y^(j-1) = 1/(i*j).
+    std::array<Eigen::Vector3d, 4> square = {
+        Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(1, 0, 0),
+        Eigen::Vector3d(1, 1, 0), Eigen::Vector3d(0, 1, 0)};
+    const Eigen::MatrixXd cs = a502::panelAreaMoments(square, 4, 0, 5);
+    // panmom fills only the triangular block i+j <= degree+2.
+    for (int i = 1; i <= 6; ++i)
+        for (int j = 1; j <= 6; ++j) {
+            if (i + j > 7)
+                continue;
+            CHECK(cs(i - 1, j - 1) ==
+                  Catch::Approx(1.0 / (i * j)).epsilon(1e-12));
+        }
+
+    // Translated square [2,3] x [-1,0].
+    std::array<Eigen::Vector3d, 4> shifted = {
+        Eigen::Vector3d(2, -1, 0), Eigen::Vector3d(3, -1, 0),
+        Eigen::Vector3d(3, 0, 0), Eigen::Vector3d(2, 0, 0)};
+    const Eigen::MatrixXd ct = a502::panelAreaMoments(shifted, 4, 0, 5);
+    for (int i = 1; i <= 6; ++i) {
+        const double xi = (std::pow(3.0, i) - std::pow(2.0, i)) / i;
+        for (int j = 1; j <= 6; ++j) {
+            if (i + j > 7)
+                continue;
+            const double yj = (j % 2 != 0) ? 1.0 / j : -1.0 / j;
+            CHECK(ct(i - 1, j - 1) ==
+                  Catch::Approx(xi * yj).epsilon(1e-12));
+        }
+    }
+
+    // Triangle with vertices (0,0),(1,0),(0,1): the fourth vertex repeats
+    // the first and edge ics=4 is skipped.
+    std::array<Eigen::Vector3d, 4> triangle = {
+        Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(1, 0, 0),
+        Eigen::Vector3d(0, 1, 0), Eigen::Vector3d(0, 0, 0)};
+    const Eigen::MatrixXd cm = a502::panelAreaMoments(triangle, 4, 4, 5);
+    for (int i = 1; i <= 6; ++i)
+        for (int j = 1; j <= 6; ++j) {
+            if (i + j > 7)
+                continue;
+            const double expected =
+                factorial(i - 1) * factorial(j - 1) /
+                factorial(i + j);
+            CHECK(cm(i - 1, j - 1) ==
+                  Catch::Approx(expected).epsilon(1e-12));
+        }
+}
+
 TEST_CASE("biquadratic basis functions", "[splines][bqbfun]") {
     struct Pt { int index; double s; double t; };
     const Pt pts[9] = {{0, 1, 1},  {1, -1, 1},  {2, -1, -1},

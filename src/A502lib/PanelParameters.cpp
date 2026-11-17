@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace a502 {
 
@@ -86,6 +87,85 @@ PanelParameters closestPanelParameters(
     out.t = t;
     out.valid = converged;
     return out;
+}
+
+namespace {
+
+// lchvar(): apply x = x0 + dx*tau to the polynomial coefficients
+// v[k] = coefficient of tau^(k-1), in place.  base is a 0-based offset into
+// the flat buffer; inc matches the Fortran stride parameter.
+void lchvar(std::vector<double>& v, std::size_t base, double x0, double dx,
+            int idim, int inc) {
+    int last = 1 + idim;
+    for (int idbk = 1; idbk <= idim; ++idbk) {
+        const int id = 1 + idim - idbk;
+        const int lstinc = last + inc;
+        for (int j = 1; j <= id; ++j) {
+            const std::size_t dst =
+                base + static_cast<std::size_t>(lstinc + 1 - j) - 1;
+            const std::size_t srcDx =
+                base + static_cast<std::size_t>(last + 1 - j) - 1;
+            const std::size_t srcX0 =
+                base + static_cast<std::size_t>(last - j) - 1;
+            v[dst] = dx * v[srcDx] + x0 * v[srcX0];
+        }
+        last = lstinc;
+    }
+}
+
+} // namespace
+
+Eigen::MatrixXd panelAreaMoments(
+    const std::array<Eigen::Vector3d, 4>& vertices, int nside, int ics,
+    int degree) {
+    Eigen::MatrixXd c = Eigen::MatrixXd::Zero(degree + 1, degree + 1);
+    if (nside < 3 || nside > 4 || degree < 0 || degree > 8)
+        return c;
+
+    const int np1 = degree + 1;
+    const int np2 = degree + 2;
+    std::vector<double> e(
+        static_cast<std::size_t>(np2) * static_cast<std::size_t>(np1),
+        0.0);
+
+    for (int ic = 1; ic <= nside; ++ic) {
+        if (ic == ics)
+            continue;
+        int icp1 = ic % nside + 1;
+        if (icp1 == ics)
+            icp1 = ics % nside + 1;
+
+        const Eigen::Vector3d& p1 =
+            vertices[static_cast<std::size_t>(ic - 1)];
+        const Eigen::Vector3d& p2 =
+            vertices[static_cast<std::size_t>(icp1 - 1)];
+        const double delx = p2.x() - p1.x();
+        const double dely = p2.y() - p1.y();
+
+        for (int i = 1; i <= np2; ++i)
+            e[static_cast<std::size_t>(i - 1)] = dely / i;
+
+        lchvar(e, 0, p1.y(), dely, np1, np1);
+        for (int j = 1; j <= np1; ++j) {
+            const std::size_t base =
+                static_cast<std::size_t>(j - 1) *
+                static_cast<std::size_t>(np2);
+            lchvar(e, base, p1.x(), delx, np2 - j, 0);
+        }
+
+        for (int i = 1; i <= np1; ++i) {
+            const double aiinv = 1.0 / i;
+            const int jmax = np2 - i;
+            for (int j = 1; j <= jmax; ++j) {
+                const std::size_t idx =
+                    static_cast<std::size_t>(j - 1) *
+                        static_cast<std::size_t>(np2) +
+                    static_cast<std::size_t>(i + 1) - 1;
+                c(i - 1, j - 1) += aiinv * e[idx];
+            }
+        }
+    }
+    return c;
 }
 
 NearPlane buildNearPlane(const std::array<Eigen::Vector3d, 4>& c) {
