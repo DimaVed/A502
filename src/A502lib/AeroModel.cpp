@@ -1879,8 +1879,8 @@ bool AeroModel::solveFlow() {
         includeEdgeAndCorner[k] = doubletOnly;
     }
 
-    const GlobalBoundarySystem system = buildGlobalNormalFluxSystem(
-        nets, flow, layout, 1.0, 1.0, 1.0e-10, includeEdgeAndCorner);
+    const GlobalBoundarySystem system = buildGlobalDefaultBoundarySystem(
+        nets, flow, layout, includeEdgeAndCorner, 1.0e-10);
     if (!system.valid) {
         BLOG(warning) << "solveFlow(): boundary system assembly failed";
         return false;

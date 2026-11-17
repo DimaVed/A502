@@ -33,7 +33,8 @@ GlobalBoundarySystem buildGlobalNormalFluxSystemImpl(
     const std::vector<Network>& networks, const Compressibility& flow,
     const GlobalSingularityLayout& layout, double cu, double cl,
     double matchingTolerance,
-    const std::vector<bool>& includeEdgeAndCorner) {
+    const std::vector<bool>& includeEdgeAndCorner,
+    bool useNetworkDefaults, const Eigen::Vector3d& reference) {
     GlobalBoundarySystem out;
     if (networks.empty() || layout.network.size() != networks.size() ||
         includeEdgeAndCorner.size() != networks.size())
@@ -67,8 +68,38 @@ GlobalBoundarySystem buildGlobalNormalFluxSystemImpl(
             if (!local.valid)
                 return GlobalBoundarySystem{};
 
-            const BoundaryConditionCoefficients bc =
-                standardNormalMassFlux(cu, cl, cp.normal, flow.compd);
+            BoundaryConditionCoefficients bc;
+            if (!useNetworkDefaults) {
+                bc = standardNormalMassFlux(cu, cl, cp.normal, flow.compd);
+            } else {
+                // First available default condition at this control point.
+                const NetworkTypeDefaults defaults =
+                    networkTypeDefaults(net.kt, flow.mach);
+                int nlopt = 0;
+                int nropt = 0;
+                if (defaults.nlopt1 != 0) {
+                    nlopt = defaults.nlopt1;
+                    nropt = defaults.nropt1;
+                } else if (defaults.nlopt2 != 0) {
+                    nlopt = defaults.nlopt2;
+                    nropt = defaults.nropt2;
+                } else {
+                    continue; // no boundary condition at this point
+                }
+
+                const LeftHandBoundaryOption left =
+                    buildLeftHandBoundaryOption(nlopt, flow, cp.normal);
+                if (!left.supported || !left.hasCondition)
+                    return GlobalBoundarySystem{};
+                bc = left.coefficients;
+
+                const BoundaryRightHandSide right =
+                    buildBoundaryRightHandSide(nropt, flow, cp.normal,
+                                               cp.position, reference);
+                if (!right.supported)
+                    return GlobalBoundarySystem{};
+                bc.bet = right.hasValue ? right.value : 0.0;
+            }
             BoundaryRow row = buildBoundaryRow(
                 global, cp.normal, flow, bc, local);
             if (!row.valid)
@@ -166,7 +197,8 @@ GlobalBoundarySystem buildGlobalNormalFluxSystem(
     const std::vector<bool> perNetwork(networks.size(),
                                        includeEdgeAndCorner);
     return buildGlobalNormalFluxSystemImpl(
-        networks, flow, layout, cu, cl, matchingTolerance, perNetwork);
+        networks, flow, layout, cu, cl, matchingTolerance, perNetwork,
+        false, Eigen::Vector3d::Zero());
 }
 
 GlobalBoundarySystem buildGlobalNormalFluxSystem(
@@ -176,7 +208,17 @@ GlobalBoundarySystem buildGlobalNormalFluxSystem(
     const std::vector<bool>& includeEdgeAndCorner) {
     return buildGlobalNormalFluxSystemImpl(
         networks, flow, layout, cu, cl, matchingTolerance,
-        includeEdgeAndCorner);
+        includeEdgeAndCorner, false, Eigen::Vector3d::Zero());
+}
+
+GlobalBoundarySystem buildGlobalDefaultBoundarySystem(
+    const std::vector<Network>& networks, const Compressibility& flow,
+    const GlobalSingularityLayout& layout,
+    const std::vector<bool>& includeEdgeAndCorner,
+    double matchingTolerance, const Eigen::Vector3d& reference) {
+    return buildGlobalNormalFluxSystemImpl(
+        networks, flow, layout, 1.0, 1.0, matchingTolerance,
+        includeEdgeAndCorner, true, reference);
 }
 
 GlobalSystemScaling buildGlobalSystemScaling(

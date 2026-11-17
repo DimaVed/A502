@@ -45,6 +45,18 @@ GlobalBoundarySystem buildGlobalNormalFluxSystem(
     double matchingTolerance,
     const std::vector<bool>& includeEdgeAndCorner);
 
+// Assembly using the per-kt default left/right boundary options from inbc().
+// The first non-zero option among nlopt1/nlopt2 is used for each control
+// point; the A502 nbin/upper-lower selection, deck-specific kt overrides,
+// and material cpfmat values are not applied yet (air factors are used).
+// reference is the zmctr used by nropt=3/8.
+GlobalBoundarySystem buildGlobalDefaultBoundarySystem(
+    const std::vector<Network>& networks, const Compressibility& flow,
+    const GlobalSingularityLayout& layout,
+    const std::vector<bool>& includeEdgeAndCorner,
+    double matchingTolerance = 1.0e-10,
+    const Eigen::Vector3d& reference = Eigen::Vector3d::Zero());
+
 // Diagonal row/column equilibration of the global matrix:
 //   A_scaled = diag(row) * A * diag(column),
 //   b_scaled = diag(row) * b,

@@ -2805,9 +2805,16 @@ TEST_CASE("AeroModel: first end-to-end flow solve", "[aeromodel][flowsolve]") {
         // Panel 0 corresponds to the centre control point at (0,0).
         const auto layout =
             a502::buildGlobalSingularityLayout(model.networks);
-        const auto system = a502::buildGlobalNormalFluxSystem(
-            model.networks, model.flow, layout, 1.0, 1.0, 1e-10, true);
+        const std::vector<bool> allPoints{true};
+        const auto system = a502::buildGlobalDefaultBoundarySystem(
+            model.networks, model.flow, layout, allPoints, 1e-10);
         REQUIRE(system.valid);
+        CHECK(system.nRows == 25);
+        CHECK(system.nColumns == 25);
+        const auto simpleSystem = a502::buildGlobalNormalFluxSystem(
+            model.networks, model.flow, layout, 1.0, 1.0, 1e-10, true);
+        REQUIRE(simpleSystem.valid);
+        CHECK((system.matrix - simpleSystem.matrix).norm() > 1e-8);
         const auto solution =
             a502::solveGlobalBoundarySystem(system);
         REQUIRE(solution.valid);
@@ -2840,6 +2847,19 @@ TEST_CASE("AeroModel: first end-to-end flow solve", "[aeromodel][flowsolve]") {
                 nonZero = true;
         }
         CHECK(nonZero);
+
+        const auto layout =
+            a502::buildGlobalSingularityLayout(model.networks);
+        const std::vector<bool> centersOnly{false};
+        const auto system = a502::buildGlobalDefaultBoundarySystem(
+            model.networks, model.flow, layout, centersOnly, 1e-10);
+        REQUIRE(system.valid);
+        CHECK(system.nRows == 9);
+        CHECK(system.nColumns == 9);
+        const auto simpleSystem = a502::buildGlobalNormalFluxSystem(
+            model.networks, model.flow, layout, 1.0, 1.0, 1e-10, false);
+        REQUIRE(simpleSystem.valid);
+        CHECK((system.rhs - simpleSystem.rhs).norm() > 1e-8);
     }
 
     SECTION("composite network is refused") {

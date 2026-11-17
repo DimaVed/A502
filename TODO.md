@@ -38,6 +38,8 @@
 - Таблица default singularity/BC-опций по `kt` (`inbc`).
 - Глобальная система:
   - сборка normal-flux BC + matching;
+  - сборка с per-kt default `nlopt`/`nropt` из `inbc`/`bcopt`
+    (`buildGlobalDefaultBoundarySystem`);
   - выбор активных source/doublet-колонок;
   - row/column equilibration, rank/conditioning-диагностика;
   - аудит числа уравнений/неизвестных по сетям и типам точек;
@@ -67,8 +69,9 @@
 - Квадратная doublet-only система плохо обусловлена; физическая невязка
   около `1e-4`.
 - Полные `bconcl`/`bcopt` не портированы:
-  - есть таблица default-опций по `kt`, но она ещё не применяется при
-    сборке строк;
+  - default-опции по `kt` применяются в `buildGlobalDefaultBoundarySystem`
+    и `solveFlow`, но выбор `nbin`/upper-lower упрощён до первой
+    ненулевой опции, а материалы пока берутся как air;
   - нет разбора пользовательских BC-карт и deck-специфичных override
     (`kt=2/18/19`);
   - нет `nlopt` 1, 10, 21..25 (пользовательские коэффициенты, `ccof`)
@@ -92,9 +95,9 @@
   и к выбору формулы `Cp` по сети/поверхности при постпроцессинге.
 - `AeroModel::solveFlow()` — только независимые source-only/doublet-only
   сети с квадратной системой; composite-сети и doublet-сети с
-  matching-строками (до elimination) не решаются.  Используется
-  упрощённый normal-flux BC (`cu=cl=1`, `nropt=2`), не полные
-  `bconcl`/`bcopt` defaults; `Panel.cp` при отказе остаётся заглушкой.
+  matching-строками (до elimination) не решаются.  Используются per-kt
+  default BC с упрощённым выбором `nbin`; `Panel.cp` при отказе остаётся
+  заглушкой.
 - Из генераторов геометрии есть `$circular`, `$trailing`,
   `$quadrilateral` и `$elliptic`; нет `$gothic`.  В `$circular`/
   `$elliptic` не поддержан вариант `nopt>0` с z-картами без заголовка
