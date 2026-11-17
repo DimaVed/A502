@@ -4,10 +4,13 @@
 // card sequence as meshp/inbc in panair.f90 (kn card, kt card, "nm nn
 // netname" cards, then exactly nm*nn coordinate points).
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "AeroModel.h"
+#include "PanelGeometry.h"
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -161,4 +164,120 @@ TEST_CASE("$circular is not a $points section", "[parser][points]") {
     a502::AeroModel model;
     model.parse(samplePath("nac6.inp").string());
     CHECK(model.networks.empty());
+}
+
+TEST_CASE("panel geometry: unit square", "[geometry]") {
+    // Column-major grid:
+    //   (m=0,n=0)=(0,0,0)  (m=1,n=0)=(1,0,0)
+    //   (m=0,n=1)=(0,1,0)  (m=1,n=1)=(1,1,0)
+    const std::vector<double> coords = {
+        0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 1.0, 1.0, 0.0};
+
+    const a502::PanelGeometry g =
+        a502::buildPanelGeometry(coords, 2, 2, 0, 0);
+
+    REQUIRE_FALSE(g.degenerate);
+    CHECK(g.cp[0].isApprox(Eigen::Vector3d(0, 0, 0)));
+    CHECK(g.cp[1].isApprox(Eigen::Vector3d(0, 1, 0)));
+    CHECK(g.cp[2].isApprox(Eigen::Vector3d(1, 1, 0)));
+    CHECK(g.cp[3].isApprox(Eigen::Vector3d(1, 0, 0)));
+    CHECK(g.cp[8].isApprox(Eigen::Vector3d(0.5, 0.5, 0)));
+    CHECK(g.center.isApprox(g.cp[8]));
+    // A502 normal = (+column) x (+row) = (0,1,0) x (1,0,0).
+    CHECK(g.normal.isApprox(Eigen::Vector3d(0, 0, -1)));
+    CHECK(g.area == Catch::Approx(1.0).epsilon(1e-14));
+
+    double subArea = 0.0;
+    for (const auto& s : g.subpanels) {
+        CHECK_FALSE(s.degenerate);
+        CHECK(s.area > 0.0);
+        CHECK(std::abs(s.normal.norm() - 1.0) < 1e-14);
+        CHECK(s.normal.dot(g.normal) > 1.0 - 1e-14);
+        CHECK((s.toGlobal * s.toLocal -
+               Eigen::Matrix3d::Identity()).norm() < 1e-14);
+        CHECK((s.toLocal * (s.vertex[0] - s.origin)).norm() < 1e-14);
+        CHECK(std::abs((s.toLocal * (s.vertex[1] - s.origin)).z()) < 1e-14);
+        CHECK(std::abs((s.toLocal * (s.vertex[2] - s.origin)).z()) < 1e-14);
+        subArea += s.area;
+    }
+    CHECK(subArea == Catch::Approx(g.area).epsilon(1e-14));
+}
+
+TEST_CASE("panel geometry: collapsed edge becomes a triangle", "[geometry]") {
+    // P1 == P2 (network points (m=0,n=0) and (m=0,n=1)), so edge 1 is
+    // collapsed and the panel is the triangle P1,P3,P4.
+    const std::vector<double> coords = {
+        0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 1.0, 1.0, 0.0};
+
+    const a502::PanelGeometry g =
+        a502::buildPanelGeometry(coords, 2, 2, 0, 0);
+
+    CHECK_FALSE(g.degenerate);
+    CHECK(g.collapsedEdge == 1);
+    CHECK(g.area == Catch::Approx(0.5).epsilon(1e-14));
+    CHECK(g.normal.isApprox(Eigen::Vector3d(0, 0, -1)));
+}
+
+TEST_CASE("panel geometry: sample decks", "[geometry]") {
+    SECTION("swb") {
+        a502::AeroModel model;
+        model.parse(samplePath("swb.inp").string());
+        REQUIRE(model.solve());
+        CHECK(model.totalPanels == 72);
+
+        const auto& first = model.panels.front();
+        CHECK(first.network == 0);
+        CHECK(first.geom.i == 0);
+        CHECK(first.geom.j == 0);
+        // A502 panel order is column-major: first panel is i=0, j=0.
+        const auto& net = model.networks[0];
+        REQUIRE(net.coordinates.size() >= 6);
+        CHECK(first.geom.cp[0].isApprox(Eigen::Vector3d(
+            net.coordinates[0], net.coordinates[1], net.coordinates[2])));
+        const std::size_t p2 = static_cast<std::size_t>(net.nm) * 3;
+        CHECK(first.geom.cp[1].isApprox(Eigen::Vector3d(
+            net.coordinates[p2], net.coordinates[p2 + 1],
+            net.coordinates[p2 + 2])));
+
+        for (const auto& pan : model.panels) {
+            const auto& g = pan.geom;
+            INFO("network " << pan.network << " panel " << g.i << "," << g.j);
+            CHECK_FALSE(g.degenerate);
+            CHECK(g.area > 0.0);
+            CHECK(std::abs(g.normal.norm() - 1.0) < 1e-12);
+
+            double subArea = 0.0;
+            for (const auto& s : g.subpanels) {
+                subArea += s.area;
+                CHECK(std::abs(s.normal.norm() - 1.0) < 1e-10);
+            }
+            CHECK(subArea == Catch::Approx(g.area).epsilon(1e-10));
+
+            // P5..P9 are the planar inner parallelogram; P9 is its center.
+            const Eigen::Vector3d& n = g.normal;
+            const double scale = std::max(1.0, g.cp[0].norm());
+            for (int k = 4; k < 9; ++k)
+                CHECK(std::abs((g.cp[k] - g.cp[4]).dot(n)) <
+                      1e-9 * scale);
+        }
+    }
+
+    SECTION("ellip and vss") {
+        for (const char* name : {"ellip.inp", "vss.inp"}) {
+            a502::AeroModel model;
+            model.parse(samplePath(name).string());
+            REQUIRE(model.solve());
+            CHECK(model.totalPanels > 0);
+            INFO("deck " << name);
+            for (const auto& pan : model.panels) {
+                double subArea = 0.0;
+                for (const auto& s : pan.geom.subpanels)
+                    subArea += s.area;
+                CHECK(subArea ==
+                      Catch::Approx(pan.geom.area).epsilon(1e-10));
+            }
+        }
+    }
 }

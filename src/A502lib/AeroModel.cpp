@@ -883,12 +883,16 @@ bool AeroModel::isSolved() const {
 }
 
 bool AeroModel::solve() {
-    // Geometric precursor only: build one Panel per quad cell so a visualizer
-    // can shade a synthetic Cp field.  Full higher-order AIC solve lives in
-    // the Fortran A502 code and is not ported here yet.
+    // Geometric precursor only: build the nine canonical points and the eight
+    // triangular subpanels for every quad cell.  Full higher-order AIC solve
+    // lives in the Fortran A502 code and is not ported here yet.
+    //
+    // Panel order is the A502 order (geomc): columns outer, rows inner:
+    //   panel index = i + (nm-1)*j.
     panels.clear();
     totalSurfaceArea = 0.0;
     totalPanels = 0;
+    std::size_t skipped = 0;
     solved_ = false;
 
     for (std::size_t netIdx = 0; netIdx < networks.size(); ++netIdx) {
@@ -898,41 +902,31 @@ bool AeroModel::solve() {
         if (nm < 2 || nn < 2)
             continue;
 
-        const std::size_t nAvail = n.coordinates.size() / 3;
-        auto pointAt = [&](int i, int j, Eigen::Vector3d& p) -> bool {
-            const std::size_t g = static_cast<std::size_t>(j) * nm + i;
-            if (g >= nAvail)
-                return false;
-            p = Eigen::Vector3d(n.coordinates[g * 3 + 0],
-                                n.coordinates[g * 3 + 1],
-                                n.coordinates[g * 3 + 2]);
-            return true;
-        };
+        const std::size_t nPoints =
+            static_cast<std::size_t>(nm) * static_cast<std::size_t>(nn);
+        if (n.coordinates.size() < nPoints * 3) {
+            BLOG(warning) << "solve(): network '" << n.netname
+                          << "' has too few coordinates ("
+                          << n.coordinates.size() / 3 << " of " << nPoints
+                          << ")";
+            continue;
+        }
 
-        for (int i = 0; i + 1 < nm; ++i) {
-            for (int j = 0; j + 1 < nn; ++j) {
-                Eigen::Vector3d p00, p10, p11, p01;
-                if (!pointAt(i, j, p00) || !pointAt(i + 1, j, p10) ||
-                    !pointAt(i + 1, j + 1, p11) || !pointAt(i, j + 1, p01))
+        for (int j = 0; j + 1 < nn; ++j) {
+            for (int i = 0; i + 1 < nm; ++i) {
+                PanelGeometry geom =
+                    buildPanelGeometry(n.coordinates, nm, nn, i, j);
+                if (geom.degenerate) {
+                    ++skipped;
                     continue;
-
-                const Eigen::Vector3d center =
-                    0.25 * (p00 + p10 + p11 + p01);
-                const Eigen::Vector3d nvec =
-                    (p10 - p00).cross(p01 - p00) +
-                    (p01 - p11).cross(p10 - p11);
-                const double nnorm = nvec.norm();
-                if (nnorm <= 0.0)
-                    continue;
+                }
 
                 Panel pan;
-                pan.center = center;
-                pan.normal = nvec / nnorm;
-                pan.area = 0.5 * nnorm;
-                // Synthetic Cp so ParaView has a visible scalar (placeholder).
-                pan.cp = pan.normal.x();
+                pan.geom = std::move(geom);
                 pan.network = static_cast<int>(netIdx);
-                totalSurfaceArea += pan.area;
+                // Synthetic Cp so ParaView has a visible scalar (placeholder).
+                pan.cp = pan.geom.normal.x();
+                totalSurfaceArea += pan.geom.area;
                 panels.push_back(std::move(pan));
             }
         }
@@ -941,7 +935,8 @@ bool AeroModel::solve() {
     totalPanels = panels.size();
     solved_ = !panels.empty();
     if (solved_) {
-        BLOG(info) << "solve(): " << totalPanels << " panels, total area="
+        BLOG(info) << "solve(): " << totalPanels << " panels, "
+                   << skipped << " degenerate skipped, total area="
                    << totalSurfaceArea;
     } else {
         BLOG(warning) << "solve(): no usable panels from networks";
