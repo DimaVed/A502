@@ -423,7 +423,8 @@ BoundaryRightHandSide buildBoundaryRightHandSide(
 
 LeftHandBoundaryOption buildLeftHandBoundaryOption(
     int nlopt, const Compressibility& flow,
-    const Eigen::Vector3d& normal) {
+    const Eigen::Vector3d& normal,
+    double upperCpFactor, double lowerCpFactor) {
     LeftHandBoundaryOption out;
     if (nlopt == 0) {
         out.supported = true;
@@ -480,6 +481,40 @@ LeftHandBoundaryOption buildLeftHandBoundaryOption(
         bc.du = 0.5;
         bc.dl = 0.5;
         break;
+
+    // ---- material-based pressure conditions (nct = 2) -------------------
+    case 18:
+    case 19:
+    case 20: {
+        const double n2 = normal.squaredNorm();
+        const double znznu =
+            n2 + (flow.betams - 1.0) * normal.dot(flow.compd) *
+                     normal.dot(flow.compd);
+        if (std::abs(znznu) <= 1.0e-30)
+            return out;
+        const Eigen::Vector3d zncs =
+            compressibilityScale(flow.betams, flow.compd, normal);
+
+        bc.nct = 2;
+        for (int side = 0; side < 2; ++side) {
+            const double sgn = (side == 0) ? 1.0 : -1.0;
+            const double cpFactor =
+                (side == 0) ? upperCpFactor : lowerCpFactor;
+            // fsvm(1) = 1: the freestream vector is the unit direction.
+            const Eigen::Vector3d tg =
+                (-2.0 * sgn * cpFactor) * flow.compd;
+            const double fac = normal.dot(tg) / znznu;
+            const Eigen::Vector3d tangential = tg - fac * zncs;
+            if (side == 0) {
+                bc.cu = fac;
+                bc.tu = tangential;
+            } else {
+                bc.cl = fac;
+                bc.tl = tangential;
+            }
+        }
+        break;
+    }
 
     // ---- normal perturbation velocity (nct = 2) -------------------------
     case 11:
@@ -540,8 +575,8 @@ LeftHandBoundaryOption buildLeftHandBoundaryOption(
     }
 
     default:
-        // nlopt=1 (input coefficients), 10 (ccof), 18..20 (materials),
-        // 21..25 are not ported yet.
+        // nlopt=1 (input coefficients), 10 (ccof), and 21..25 are not
+        // ported yet.
         return out;
     }
 

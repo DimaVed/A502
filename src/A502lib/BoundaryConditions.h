@@ -91,11 +91,12 @@ BoundaryRightHandSide buildBoundaryRightHandSide(
 
 // Result of the bcopt() left-hand-side dispatch (A502 nlopt).  supported is
 // false for options that need input coefficients (nlopt=1), a Fortran-coded
-// routine (10), material data (18..20), or are not ported (21..25).
-// hasCondition is false only for nlopt=0, which means "no boundary
-// condition".  Velocity options (11..14) use the default $compressibility
-// axis-angle constants al1=al2=0, enx1=enx2=1; the corresponding input
-// options are not parsed yet.
+// routine (10), or are not ported (21..25).  hasCondition is false only for
+// nlopt=0, which means "no boundary condition".  Velocity options (11..14)
+// use the default $compressibility axis-angle constants al1=al2=0,
+// enx1=enx2=1; the corresponding input options are not parsed yet.
+// Options 18..20 use the upper/lower surface material cpfmat ratios and the
+// unit freestream direction (A502 fsvm(1) = 1 in this model).
 struct LeftHandBoundaryOption {
     BoundaryConditionCoefficients coefficients;
     bool supported{false};
@@ -104,7 +105,8 @@ struct LeftHandBoundaryOption {
 
 LeftHandBoundaryOption buildLeftHandBoundaryOption(
     int nlopt, const Compressibility& flow,
-    const Eigen::Vector3d& normal);
+    const Eigen::Vector3d& normal,
+    double upperCpFactor = 1.0, double lowerCpFactor = 1.0);
 
 struct BoundarySystemRows {
     int nRows{0};

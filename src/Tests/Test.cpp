@@ -1616,7 +1616,7 @@ TEST_CASE("boundary condition options follow bcopt",
     CHECK(none.supported);
     CHECK_FALSE(none.hasCondition);
 
-    for (int nlopt : {1, 10, 18, 19, 20, 21, 25}) {
+    for (int nlopt : {1, 10, 21, 25}) {
         INFO("nlopt " << nlopt);
         const auto unsupported = option(nlopt);
         CHECK_FALSE(unsupported.supported);
@@ -1706,6 +1706,46 @@ TEST_CASE("boundary condition options follow bcopt",
     REQUIRE(m0.supported);
     CHECK(m0.coefficients.cu == Catch::Approx(1.0).epsilon(1e-14));
     CHECK(m0.coefficients.tu.isZero(1e-14));
+
+    // Material-based options 18..20: derivative of cp with respect to the
+    // normal, using the dcip compressibility-scaled dot product.
+    const double nDotV = normal.dot(flow.compd);
+    const double znznu =
+        normal.squaredNorm() + (flow.betams - 1.0) * nDotV * nDotV;
+    for (int nlopt : {18, 19, 20}) {
+        INFO("nlopt " << nlopt);
+        const auto got = option(nlopt);
+        REQUIRE(got.supported);
+        CHECK(got.coefficients.nct == 2);
+
+        const Eigen::Vector3d upper =
+            (-2.0 * flow.compd - (normal.dot(-2.0 * flow.compd) / znznu) *
+                                     zncs);
+        const Eigen::Vector3d lower =
+            (2.0 * flow.compd - (normal.dot(2.0 * flow.compd) / znznu) *
+                                    zncs);
+        CHECK(got.coefficients.cu ==
+              Catch::Approx(normal.dot(-2.0 * flow.compd) / znznu)
+                  .epsilon(1e-12));
+        CHECK(got.coefficients.cl ==
+              Catch::Approx(normal.dot(2.0 * flow.compd) / znznu)
+                  .epsilon(1e-12));
+        CHECK((got.coefficients.tu - upper).norm() < 1e-12);
+        CHECK((got.coefficients.tl - lower).norm() < 1e-12);
+    }
+
+    // Different upper/lower material factors scale only their own terms.
+    const auto upperMaterial =
+        a502::buildLeftHandBoundaryOption(18, flow, normal, 1.5, 0.5);
+    REQUIRE(upperMaterial.supported);
+    const Eigen::Vector3d upperScaled =
+        (-3.0 * flow.compd -
+         (normal.dot(-3.0 * flow.compd) / znznu) * zncs);
+    const Eigen::Vector3d lowerScaled =
+        (1.0 * flow.compd -
+         (normal.dot(1.0 * flow.compd) / znznu) * zncs);
+    CHECK((upperMaterial.coefficients.tu - upperScaled).norm() < 1e-12);
+    CHECK((upperMaterial.coefficients.tl - lowerScaled).norm() < 1e-12);
 }
 
 TEST_CASE("pressure coefficients: cpcal formulas", "[flowsolution]") {
