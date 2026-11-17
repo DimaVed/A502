@@ -2172,6 +2172,35 @@ TEST_CASE("global system: equilibration and diagnostics", "[globalsystem]") {
     CHECK(deficientScaling.row(1) == Catch::Approx(0.25).epsilon(1e-14));
     CHECK_FALSE(a502::solveGlobalBoundarySystem(deficient).valid);
 
+    // Square singular system: the optional gauge returns the minimum-norm
+    // solution, but an inconsistent right-hand side is rejected.
+    a502::GlobalBoundarySystem singular;
+    singular.nRows = 2;
+    singular.nColumns = 2;
+    singular.nActiveSource = 2;
+    singular.nActiveDoublet = 0;
+    singular.matrix.resize(2, 2);
+    singular.matrix << 1.0, 1.0,
+                       0.0, 0.0;
+    singular.rhs.resize(2);
+    singular.rhs << 2.0, 0.0;
+    singular.valid = true;
+
+    CHECK_FALSE(a502::solveGlobalBoundarySystem(singular).valid);
+    a502::GlobalSolveOptions gauge;
+    gauge.allowRankDeficient = true;
+    const auto gauged = a502::solveGlobalBoundarySystem(singular, gauge);
+    REQUIRE(gauged.valid);
+    CHECK(gauged.rank == 1);
+    CHECK(gauged.nullity == 1);
+    CHECK(gauged.gauged);
+    CHECK(gauged.unknowns(0) == Catch::Approx(1.0).epsilon(1e-12));
+    CHECK(gauged.unknowns(1) == Catch::Approx(1.0).epsilon(1e-12));
+    CHECK(gauged.residualNorm < 1e-12);
+
+    singular.rhs << 2.0, 1.0;
+    CHECK_FALSE(a502::solveGlobalBoundarySystem(singular, gauge).valid);
+
     a502::GlobalBoundarySystem empty;
     CHECK_FALSE(a502::buildGlobalSystemScaling(empty).valid);
     CHECK_FALSE(a502::analyzeGlobalBoundarySystem(empty).valid);
@@ -3197,4 +3226,122 @@ TEST_CASE("edgls: edge quadratic reproduction", "[splines][edge]") {
     CHECK(lsz.a[1] == 0.5);
     CHECK(lsz.a[2] == 0.5);
     CHECK(lsz.a[3] == 0.0);
+}
+
+TEST_CASE("global system: closed doublet box needs a gauge",
+          "[globalsystem]") {
+    auto makeFace = [](int axis, double offset, const char* name) {
+        a502::Network net;
+        net.netname = name;
+        net.nm = 4;
+        net.nn = 4;
+        net.kt = 12;
+        for (int n = 0; n < 4; ++n) {
+            for (int m = 0; m < 4; ++m) {
+                const double a = static_cast<double>(m);
+                const double b = static_cast<double>(n);
+                if (axis == 0) {
+                    net.coordinates.insert(net.coordinates.end(),
+                                           {a, b, offset});
+                } else if (axis == 1) {
+                    net.coordinates.insert(net.coordinates.end(),
+                                           {a, offset, b});
+                } else {
+                    net.coordinates.insert(net.coordinates.end(),
+                                           {offset, a, b});
+                }
+            }
+        }
+        return net;
+    };
+
+    // Six faces of the cube [0,3]^3; every edge is shared by two faces and
+    // every corner by three.
+    const std::vector<a502::Network> networks = {
+        makeFace(0, 0.0, "z0"), makeFace(0, 3.0, "z1"),
+        makeFace(1, 0.0, "y0"), makeFace(1, 3.0, "y1"),
+        makeFace(2, 0.0, "x0"), makeFace(2, 3.0, "x1")};
+    const auto edges = a502::buildNetworkEdges(networks);
+    REQUIRE(edges.size() == 24);
+    const auto matches = a502::findFullEdgeMatches(edges, 1e-10);
+    REQUIRE(matches.size() == 12);
+
+    const auto flow = a502::Compressibility::fromAngles(0.6, 0.0, 0.0);
+    const auto layout =
+        a502::buildGlobalSingularityLayout(networks);
+    REQUIRE(layout.activeSource == 0);
+    REQUIRE(layout.activeDoublet == 150);
+    REQUIRE(layout.totalDoublet == 150);
+
+    const auto system = a502::buildGlobalNormalFluxSystem(
+        networks, flow, layout, 1.0, 1.0, 1e-10, true);
+    REQUIRE(system.valid);
+    CHECK(system.nBcRows == 150);
+    CHECK(system.nMatchingRows == 52);
+    CHECK(system.nRows == 202);
+    CHECK(system.nColumns == 150);
+
+    const auto diagnostics =
+        a502::analyzeGlobalBoundarySystem(system);
+    REQUIRE(diagnostics.valid);
+    CHECK(diagnostics.rank == 149);
+    CHECK(std::isinf(diagnostics.conditionNumber));
+
+    // The constant-doublet mode is (numerically) in the null space.
+    const Eigen::VectorXd constant =
+        Eigen::VectorXd::Ones(system.nColumns);
+    CHECK((system.matrix * constant).norm() < 1e-8);
+
+    // A plain LU solve refuses the singular system.
+    CHECK_FALSE(a502::solveGlobalBoundarySystem(system).valid);
+
+    // Imposing the normal-flux condition at all 25 control points of every
+    // face over-specifies a doublet-only closed body: the extra edge/corner
+    // rows are not consistent with the doublet representation.  The gauge
+    // solve must reject this instead of returning a least-squares
+    // compromise.  (A502 replaces those rows with edge/corner matching
+    // conditions; that BC selection is the next porting step.)
+    a502::GlobalSolveOptions options;
+    options.allowRankDeficient = true;
+    CHECK_FALSE(
+        a502::solveGlobalBoundarySystem(system, options).valid);
+
+    // Panel-centre rows plus matching are consistent, though still
+    // underdetermined; the minimum-norm gauge handles the resulting null
+    // space and the constant-doublet mode.
+    const auto centerSystem = a502::buildGlobalNormalFluxSystem(
+        networks, flow, layout, 1.0, 1.0, 1e-10, false);
+    REQUIRE(centerSystem.valid);
+    CHECK(centerSystem.nBcRows == 54);
+    CHECK(centerSystem.nMatchingRows == 52);
+    CHECK(centerSystem.nRows == 106);
+    const auto centerSolution =
+        a502::solveGlobalBoundarySystem(centerSystem, options);
+    REQUIRE(centerSolution.valid);
+    CHECK(centerSolution.gauged);
+    CHECK(centerSolution.nullity ==
+          150 - centerSolution.rank);
+    CHECK(centerSolution.rank < 150);
+    REQUIRE(centerSolution.unknowns.size() == 150);
+    CHECK(centerSolution.unknowns.allFinite());
+    CHECK(centerSolution.residualNorm < 1e-8);
+
+    const auto values =
+        a502::expandGlobalSolution(centerSolution, layout);
+    REQUIRE(values.valid);
+    a502::GlobalParameterValues shifted = values;
+    shifted.doublet += Eigen::VectorXd::Constant(
+        shifted.doublet.size(), 0.5);
+
+    const auto flowA = a502::evaluateSurfaceFlow(
+        networks, flow, layout, values, true);
+    const auto flowB = a502::evaluateSurfaceFlow(
+        networks, flow, layout, shifted, true);
+    REQUIRE(flowA.valid);
+    REQUIRE(flowB.valid);
+    REQUIRE(flowA.velocity.size() == flowB.velocity.size());
+    for (std::size_t k = 0; k < flowA.velocity.size(); ++k) {
+        CHECK((flowA.velocity[k] - flowB.velocity[k]).norm() < 1e-8);
+        CHECK(std::abs(flowA.cp[k] - flowB.cp[k]) < 1e-8);
+    }
 }

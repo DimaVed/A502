@@ -242,10 +242,13 @@ GlobalSystemDiagnostics analyzeGlobalBoundarySystem(
 }
 
 GlobalSystemSolution solveGlobalBoundarySystem(
-    const GlobalBoundarySystem& system) {
+    const GlobalBoundarySystem& system,
+    const GlobalSolveOptions& options) {
     GlobalSystemSolution out;
-    if (!isUsableGlobalSystem(system) ||
-        system.matrix.rows() != system.matrix.cols())
+    if (!isUsableGlobalSystem(system))
+        return out;
+    const bool square = system.matrix.rows() == system.matrix.cols();
+    if (!square && !options.allowRankDeficient)
         return out;
 
     const GlobalSystemScaling scaling =
@@ -260,28 +263,73 @@ GlobalSystemSolution solveGlobalBoundarySystem(
         scaling.row.asDiagonal() * system.rhs;
 
     Eigen::FullPivLU<Eigen::MatrixXd> lu(scaledMatrix);
-    if (!lu.isInvertible())
-        return out;
-    out.rank = static_cast<int>(lu.rank());
+    if (square && lu.isInvertible()) {
+        out.rank = static_cast<int>(lu.rank());
 
-    // Iterative refinement is done entirely in the equilibrated system:
-    // forming the residual in the original units and mapping the correction
-    // back through large column scales would amplify round-off.
-    Eigen::VectorXd scaledUnknowns = lu.solve(scaledRhs);
+        // Iterative refinement is done entirely in the equilibrated system:
+        // forming the residual in the original units and mapping the
+        // correction back through large column scales would amplify
+        // round-off.
+        Eigen::VectorXd scaledUnknowns = lu.solve(scaledRhs);
+        for (int it = 0; it < 3; ++it) {
+            const Eigen::VectorXd residual =
+                scaledRhs - scaledMatrix * scaledUnknowns;
+            if (residual.norm() <= 1.0e-13 * scaledRhs.norm())
+                break;
+            scaledUnknowns += lu.solve(residual);
+        }
+
+        out.unknowns =
+            scaling.column.asDiagonal() * scaledUnknowns;
+        out.residualNorm =
+            (system.matrix * out.unknowns - system.rhs).norm();
+        out.scaledResidualNorm =
+            (scaledMatrix * scaledUnknowns - scaledRhs).norm();
+        out.valid = true;
+        return out;
+    }
+
+    if (!options.allowRankDeficient)
+        return out;
+
+    // Rank-deficient (singular) square system: solve the consistent
+    // least-squares problem and use the minimum-norm solution as the gauge.
+    // For closed doublet-only networks this fixes the arbitrary additive
+    // constant of the doublet potential.
+    const Eigen::Index n = scaledMatrix.cols();
+    const double scaledMax = scaledMatrix.cwiseAbs().maxCoeff();
+    Eigen::CompleteOrthogonalDecomposition<Eigen::MatrixXd> cod;
+    cod.setThreshold(1.0e-12 * (scaledMax > 0.0 ? scaledMax : 1.0));
+    cod.compute(scaledMatrix);
+    const int rank = static_cast<int>(cod.rank());
+    if (rank <= 0)
+        return out;
+
+    Eigen::VectorXd scaledUnknowns = cod.solve(scaledRhs);
     for (int it = 0; it < 3; ++it) {
         const Eigen::VectorXd residual =
             scaledRhs - scaledMatrix * scaledUnknowns;
         if (residual.norm() <= 1.0e-13 * scaledRhs.norm())
             break;
-        scaledUnknowns += lu.solve(residual);
+        scaledUnknowns += cod.solve(residual);
     }
+
+    out.scaledResidualNorm =
+        (scaledMatrix * scaledUnknowns - scaledRhs).norm();
+    // Reject an inconsistent system instead of silently returning a
+    // least-squares compromise.
+    const double consistencyScale =
+        std::max(1.0, scaledRhs.norm());
+    if (!(out.scaledResidualNorm <= 1.0e-8 * consistencyScale))
+        return out;
 
     out.unknowns =
         scaling.column.asDiagonal() * scaledUnknowns;
     out.residualNorm =
         (system.matrix * out.unknowns - system.rhs).norm();
-    out.scaledResidualNorm =
-        (scaledMatrix * scaledUnknowns - scaledRhs).norm();
+    out.rank = rank;
+    out.nullity = static_cast<int>(n) - rank;
+    out.gauged = rank < static_cast<int>(n);
     out.valid = true;
     return out;
 }

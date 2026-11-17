@@ -75,15 +75,32 @@ struct GlobalSystemSolution {
     double residualNorm{0.0};
     double scaledResidualNorm{0.0};
     int rank{0};
+    int nullity{0};
+    // True when a singular square system was solved with the minimum-norm
+    // gauge instead of a plain LU solve.
+    bool gauged{false};
     bool valid{false};
 };
 
+struct GlobalSolveOptions {
+    // Closed doublet-only configurations have a constant-doublet null mode:
+    // the induced velocity is unchanged when the same constant is added to
+    // every doublet parameter.  With this flag a singular square system is
+    // solved by a complete orthogonal decomposition, which returns the
+    // minimum-norm least-squares solution in the equilibrated unknown space.
+    // This is a numerical gauge, not an A502 boundary condition; the
+    // resulting surface velocities/Cp do not depend on the choice of gauge.
+    // Inconsistent systems are still rejected.
+    bool allowRankDeficient{false};
+};
+
 // Direct solve for a square system.  The matrix is row/column equilibrated
-// before the LU factorization; the return vector is in the original unknown
+// before the factorization; the return vector is in the original unknown
 // space.  Under/over-determined systems are left for the later
 // network-matching/unknown-elimination stage.
 GlobalSystemSolution solveGlobalBoundarySystem(
-    const GlobalBoundarySystem& system);
+    const GlobalBoundarySystem& system,
+    const GlobalSolveOptions& options = {});
 
 struct GlobalParameterValues {
     Eigen::VectorXd source;  // totalSource, zero for inactive networks
