@@ -32,6 +32,8 @@ PanelParameters closestPanelParameters(
 
 struct NearPlane {
     Eigen::Matrix3d toNear{Eigen::Matrix3d::Identity()};
+    // Third column of surfit's art matrix: v1 x v2 / sqrt(|v1 x v2|).
+    Eigen::Vector3d normal{Eigen::Vector3d::UnitZ()};
     bool            valid{false};
 };
 

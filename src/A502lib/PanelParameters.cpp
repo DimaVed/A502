@@ -112,6 +112,7 @@ NearPlane buildNearPlane(const std::array<Eigen::Vector3d, 4>& c) {
         return out;
 
     out.toNear = art.inverse();
+    out.normal = art.col(2);
     out.valid = true;
     return out;
 }

@@ -11,6 +11,7 @@
 #include "Compressibility.h"
 #include "PanelGeometry.h"
 #include "PanelParameters.h"
+#include "OuterSplines.h"
 #include "SubpanelSplines.h"
 #include "TriangleInterpolation.h"
 
@@ -868,4 +869,74 @@ TEST_CASE("doublet subpanel splines: sample panel", "[splines][doublet]") {
         CHECK(evaluateDoubletAtGlobal(g, splines, s, centroid, vals) ==
               Catch::Approx(mu(innerLocal(centroid))).epsilon(1e-9));
     }
+}
+
+TEST_CASE("source outer spline: interior panel", "[splines][outer]") {
+    // 4x4 grid of points -> 3x3 panels of unit size in the z=0 plane.
+    a502::Network net;
+    net.netname = "grid";
+    net.nm = 4;
+    net.nn = 4;
+    net.coordinates.reserve(4 * 4 * 3);
+    for (int n = 0; n < 4; ++n) {
+        for (int m = 0; m < 4; ++m) {
+            net.coordinates.push_back(static_cast<double>(m));
+            net.coordinates.push_back(static_cast<double>(n));
+            net.coordinates.push_back(0.0);
+        }
+    }
+
+    const auto spline = a502::buildSourceOuterSpline(net, 1, 1);
+    REQUIRE(spline.valid);
+    for (int k = 0; k < 9; ++k)
+        CHECK(spline.neighborPanel[static_cast<std::size_t>(k)] >= 0);
+
+    // Row sums must be one (constant source reproduction).
+    for (int r = 0; r < 5; ++r)
+        CHECK(spline.coefficients.row(r).sum() ==
+              Catch::Approx(1.0).epsilon(1e-10));
+
+    // A linear source function must be reproduced exactly at P1..P4,P9.
+    auto f = [](double x, double y) { return 1.0 + 2.0 * x + 3.0 * y; };
+
+    Eigen::Matrix<double, 9, 1> neighborValues;
+    int k = 0;
+    for (int dj = -1; dj <= 1; ++dj) {
+        for (int di = -1; di <= 1; ++di) {
+            const double x = (1 + di) + 0.5;
+            const double y = (1 + dj) + 0.5;
+            neighborValues(k++) = f(x, y);
+        }
+    }
+
+    const Eigen::Matrix<double, 5, 1> got = spline.coefficients * neighborValues;
+
+    const a502::PanelGeometry panel =
+        a502::buildPanelGeometry(net.coordinates, net.nm, net.nn, 1, 1);
+    REQUIRE_FALSE(panel.degenerate);
+    for (int r = 0; r < 4; ++r)
+        CHECK(got(r) ==
+              Catch::Approx(f(panel.cp[r].x(), panel.cp[r].y()))
+                  .epsilon(1e-10));
+    CHECK(got(4) ==
+          Catch::Approx(f(panel.cp[8].x(), panel.cp[8].y())).epsilon(1e-10));
+
+    // Edge/corner panels are not covered yet.
+    CHECK_FALSE(a502::buildSourceOuterSpline(net, 0, 1).valid);
+}
+
+TEST_CASE("source outer spline: sample interior panel", "[splines][outer]") {
+    a502::AeroModel model;
+    model.parse(samplePath("btac.inp").string());
+    REQUIRE(model.networks.size() > 2);
+    // akl is an 11x11 network with interior panels.
+    const auto& net = model.networks[2];
+    REQUIRE(net.nm == 11);
+    REQUIRE(net.nn == 11);
+
+    const auto spline = a502::buildSourceOuterSpline(net, 1, 1);
+    REQUIRE(spline.valid);
+    for (int r = 0; r < 5; ++r)
+        CHECK(spline.coefficients.row(r).sum() ==
+              Catch::Approx(1.0).epsilon(1e-9));
 }
