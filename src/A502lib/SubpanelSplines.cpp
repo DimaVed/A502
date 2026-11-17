@@ -54,12 +54,16 @@ buildSourceSubpanelSplines(const PanelGeometry& panel) {
 
         const Eigen::Matrix3d& frame =
             sp.scaledValid ? sp.scaledToLocal : sp.toLocal;
+        // subpqr uses the panel center as the origin of the inner
+        // subpanels (ic > 4) and the first triangle corner otherwise.
+        const Eigen::Vector3d origin =
+            (s >= 4) ? panel.cp[8] : sp.origin;
 
         Eigen::Matrix3d M;
         Eigen::Matrix<double, 3, 5> V;
         for (int k = 0; k < 3; ++k) {
             const Eigen::Vector3d local =
-                frame * (sp.vertex[k] - sp.origin);
+                frame * (sp.vertex[k] - origin);
             M(k, 0) = 1.0;
             M(k, 1) = local.x();
             M(k, 2) = local.y();
@@ -71,6 +75,7 @@ buildSourceSubpanelSplines(const PanelGeometry& panel) {
             continue;
 
         spline.coefficients = M.inverse() * V;
+        spline.origin = origin;
         spline.valid = true;
     }
 

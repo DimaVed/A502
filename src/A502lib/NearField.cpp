@@ -5,6 +5,10 @@
 
 #include "NearField.h"
 
+#include "Compressibility.h"
+#include "PanelGeometry.h"
+#include "SubpanelSplines.h"
+
 #include <cmath>
 
 namespace a502 {
@@ -272,6 +276,86 @@ SubsonicSubpanelInfluence subsonicSubpanelInfluence(
                 out.doublet(i, 9) = pi24i * out.doublet(i, 9) + y1 * dvyy;
             }
         }
+    }
+
+    out.valid = true;
+    return out;
+}
+
+PanelNearFieldInfluence subsonicPanelNearFieldInfluence(
+    const PanelGeometry& panel, const Compressibility& flow,
+    const Eigen::Vector3d& fieldPoint, int nf) {
+    PanelNearFieldInfluence out;
+    if (panel.degenerate || nf != 6)
+        return out;
+
+    const auto sourceSplines = buildSourceSubpanelSplines(panel);
+    const auto doubletSplines = buildDoubletSubpanelSplines(panel, flow);
+
+    for (int s = 0; s < 8; ++s) {
+        const std::size_t si = static_cast<std::size_t>(s);
+        const SubpanelGeometry& sp = panel.subpanels[si];
+        if (sp.degenerate)
+            continue;
+        if (!sp.scaledValid ||
+            !sourceSplines[si].valid || !doubletSplines[si].valid)
+            return PanelNearFieldInfluence{};
+
+        const Eigen::Matrix3d& frame = sp.scaledToLocal;
+        // subpqr origin convention: P9 for inner subpanels, first corner
+        // for the outer four.
+        const Eigen::Vector3d origin = (s >= 4) ? panel.cp[8] : sp.origin;
+
+        std::array<Eigen::Vector3d, 4> vertices{};
+        for (int k = 0; k < 3; ++k)
+            vertices[static_cast<std::size_t>(k)] =
+                frame * (sp.vertex[static_cast<std::size_t>(k)] - origin);
+        // All eight subpanels are triangles.  subsbi() uses ics=4 to skip
+        // the fourth edge and close the triangle from vertex 3 to vertex 1.
+        vertices[3] = vertices[0];
+
+        const Eigen::Vector3d localField = frame * (fieldPoint - origin);
+        const SubsonicSubpanelInfluence sub =
+            subsonicSubpanelInfluence(vertices, 4, 4, 3, localField,
+                                      sp.jacobian, nf);
+        if (!sub.valid)
+            return PanelNearFieldInfluence{};
+
+        const Eigen::Matrix<double, 4, 3> localSource =
+            sub.source.block<4, 3>(0, 0);
+        const Eigen::Matrix<double, 4, 6> localDoublet =
+            sub.doublet.block<4, 6>(0, 0);
+
+        Eigen::Matrix<double, 4, 5> sourceContribution =
+            localSource * sourceSplines[si].coefficients;
+        Eigen::Matrix<double, 4, 9> doubletContribution =
+            localDoublet * doubletSplines[si].coefficients;
+
+        // Transform the local velocity rows back to global coordinates
+        // before accumulating this subpanel.
+        for (int col = 0; col < 5; ++col) {
+            const Eigen::Vector3d v =
+                sp.scaledToGlobal *
+                Eigen::Vector3d(sourceContribution(1, col),
+                                sourceContribution(2, col),
+                                sourceContribution(3, col));
+            sourceContribution(1, col) = v.x();
+            sourceContribution(2, col) = v.y();
+            sourceContribution(3, col) = v.z();
+        }
+        for (int col = 0; col < 9; ++col) {
+            const Eigen::Vector3d v =
+                sp.scaledToGlobal *
+                Eigen::Vector3d(doubletContribution(1, col),
+                                doubletContribution(2, col),
+                                doubletContribution(3, col));
+            doubletContribution(1, col) = v.x();
+            doubletContribution(2, col) = v.y();
+            doubletContribution(3, col) = v.z();
+        }
+
+        out.source += sourceContribution;
+        out.doublet += doubletContribution;
     }
 
     out.valid = true;

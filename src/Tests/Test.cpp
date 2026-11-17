@@ -583,6 +583,102 @@ TEST_CASE("subsonic near-field influence: triangular subpanel",
           Catch::Approx(doubletPotential).epsilon(1e-8));
 }
 
+TEST_CASE("subsonic near-field influence: whole panel", "[nearfield]") {
+    a502::Network net;
+    net.netname = "square";
+    net.nm = 2;
+    net.nn = 2;
+    net.coordinates = {0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                       0.0, 1.0, 0.0, 1.0, 1.0, 0.0};
+    const auto flow = a502::Compressibility::fromAngles(0.0, 0.0, 0.0);
+    auto panel = a502::buildPanelGeometry(net.coordinates, 2, 2, 0, 0);
+    REQUIRE_FALSE(panel.degenerate);
+    a502::applyCompressibleFrames(panel, flow);
+
+    const Eigen::Vector3d x(0.3, 0.7, 1.0);
+    const auto infl =
+        a502::subsonicPanelNearFieldInfluence(panel, flow, x, 6);
+    REQUIRE(infl.valid);
+
+    // Gauss-Legendre quadrature over the unit square.
+    constexpr double nodes[8] = {
+        -0.9602898564975363, -0.7966664774136267,
+        -0.5255324099163290, -0.1834346424956498,
+         0.1834346424956498,  0.5255324099163290,
+         0.7966664774136267,  0.9602898564975363};
+    constexpr double weights[8] = {
+        0.1012285362903763, 0.2223810344533745,
+        0.3137066458778873, 0.3626837833783620,
+        0.3626837833783620, 0.3137066458778873,
+        0.2223810344533745, 0.1012285362903763};
+    constexpr double pi = 3.14159265358979323846;
+    const double fourPi = 4.0 * pi;
+    const double normalZ = panel.normal.z();
+
+    auto mu = [](const Eigen::Vector3d& p) {
+        return 1.0 + 2.0 * p.x() + 3.0 * p.y() +
+               4.0 * p.x() * p.x() / 2.0 + 5.0 * p.x() * p.y() +
+               6.0 * p.y() * p.y() / 2.0;
+    };
+    auto sigma = [](const Eigen::Vector3d& p) {
+        return 1.0 + 2.0 * p.x() + 3.0 * p.y();
+    };
+
+    double sourcePotential = 0.0; // -int sigma/(4 pi r)
+    double sourceVx = 0.0;
+    double sourceVy = 0.0;
+    double sourceVz = 0.0;
+    double constantSourcePotential = 0.0;
+    double constantDoubletPotential = 0.0;
+
+    for (int j = 0; j < 8; ++j) {
+        for (int i = 0; i < 8; ++i) {
+            const double xp = 0.5 * (1.0 + nodes[i]);
+            const double yp = 0.5 * (1.0 + nodes[j]);
+            const double w = 0.25 * weights[i] * weights[j];
+            const Eigen::Vector3d p(xp, yp, 0.0);
+            const double rx = x.x() - xp;
+            const double ry = x.y() - yp;
+            const double rz = x.z();
+            const double r2 = rx * rx + ry * ry + rz * rz;
+            const double r = std::sqrt(r2);
+            const double s = sigma(p);
+            sourcePotential -= w * s / (fourPi * r);
+            sourceVx += w * s * rx / (fourPi * r2 * r);
+            sourceVy += w * s * ry / (fourPi * r2 * r);
+            sourceVz += w * s * rz / (fourPi * r2 * r);
+            constantSourcePotential -= w / (fourPi * r);
+            constantDoubletPotential +=
+                w * mu(p) * normalZ * rz / (fourPi * r2 * r);
+        }
+    }
+
+    a502::PanelSourceValues sigmaValues;
+    for (int i = 0; i < 4; ++i)
+        sigmaValues(i) = sigma(panel.cp[static_cast<std::size_t>(i)]);
+    sigmaValues(4) = sigma(panel.cp[8]);
+
+    a502::PanelDoubletValues muValues;
+    for (int i = 0; i < 9; ++i)
+        muValues(i) = mu(panel.cp[static_cast<std::size_t>(i)]);
+
+    const Eigen::VectorXd sourceHit = infl.source * sigmaValues;
+    CHECK(sourceHit(0) ==
+          Catch::Approx(sourcePotential).epsilon(1e-7));
+    CHECK(sourceHit(1) == Catch::Approx(sourceVx).epsilon(1e-7));
+    CHECK(sourceHit(2) == Catch::Approx(sourceVy).epsilon(1e-7));
+    CHECK(sourceHit(3) == Catch::Approx(sourceVz).epsilon(1e-7));
+
+    const double constantSource =
+        infl.source.row(0).dot(a502::PanelSourceValues::Ones());
+    CHECK(constantSource ==
+          Catch::Approx(constantSourcePotential).epsilon(1e-7));
+
+    const double doubletHit = (infl.doublet * muValues)(0);
+    CHECK(doubletHit ==
+          Catch::Approx(constantDoubletPotential).epsilon(1e-7));
+}
+
 TEST_CASE("control points: single square network", "[controlpoints]") {
     a502::Network net;
     net.netname = "plate";
@@ -691,10 +787,10 @@ double evaluateSourceAtGlobal(const a502::PanelGeometry& g, int s,
     const auto& sp = g.subpanels[static_cast<std::size_t>(s)];
     const Eigen::Matrix3d& frame =
         sp.scaledValid ? sp.scaledToLocal : sp.toLocal;
-    const Eigen::Vector3d local = frame * (p - sp.origin);
-    return a502::evaluateSource(
-        a502::buildSourceSubpanelSplines(g)[static_cast<std::size_t>(s)],
-        local.head<2>(), v);
+    const auto splines = a502::buildSourceSubpanelSplines(g);
+    const auto& spline = splines[static_cast<std::size_t>(s)];
+    const Eigen::Vector3d local = frame * (p - spline.origin);
+    return a502::evaluateSource(spline, local.head<2>(), v);
 }
 
 } // namespace
@@ -714,8 +810,13 @@ TEST_CASE("source subpanel splines: vertex values and continuity",
     const auto splines = a502::buildSourceSubpanelSplines(g);
     for (int s = 0; s < 8; ++s) {
         INFO("subpanel " << s);
-        REQUIRE(splines[static_cast<std::size_t>(s)].valid);
+        const auto& spline = splines[static_cast<std::size_t>(s)];
+        REQUIRE(spline.valid);
         const auto& sp = g.subpanels[static_cast<std::size_t>(s)];
+        if (s >= 4)
+            CHECK((spline.origin - g.cp[8]).norm() < 1e-14);
+        else
+            CHECK((spline.origin - sp.vertex[0]).norm() < 1e-14);
         for (int k = 0; k < 3; ++k) {
             const double got =
                 evaluateSourceAtGlobal(g, s, sp.vertex[static_cast<std::size_t>(k)], vals);

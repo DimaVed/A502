@@ -35,6 +35,9 @@ using PanelSourceValues = Eigen::Matrix<double, 5, 1>;
 struct SourceSubpanelSpline {
     // rows: a0, ax, ay; columns: sigma1..sigma4, sigma9
     Eigen::Matrix<double, 3, 5> coefficients{Eigen::Matrix<double, 3, 5>::Zero()};
+    // Origin of the local coordinates: the first triangle corner for outer
+    // subpanels, the panel center P9 for inner ones (as in subpqr).
+    Eigen::Vector3d origin{Eigen::Vector3d::Zero()};
     bool valid{false};
 };
 
