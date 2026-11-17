@@ -46,7 +46,8 @@ struct GlobalInfluence {
 GlobalInfluence evaluateGlobalNearFieldInfluence(
     const std::vector<Network>& networks, const Compressibility& flow,
     const Eigen::Vector3d& fieldPoint,
-    const GlobalSingularityLayout& layout);
+    const GlobalSingularityLayout& layout,
+    const SymmetryOptions& symmetry = {});
 
 struct GlobalAic {
     int nControlPoints{0};
@@ -60,6 +61,7 @@ struct GlobalAic {
 GlobalAic buildGlobalNearFieldAic(
     const std::vector<Network>& networks, const Compressibility& flow,
     const GlobalSingularityLayout& layout,
-    const std::vector<Eigen::Vector3d>& fieldPoints);
+    const std::vector<Eigen::Vector3d>& fieldPoints,
+    const SymmetryOptions& symmetry = {});
 
 } // namespace a502

@@ -132,7 +132,9 @@ NetworkSingularityLayout buildNetworkSingularityLayout(
     return out;
 }
 
-NetworkInfluence evaluateNetworkNearFieldInfluence(
+namespace {
+
+NetworkInfluence evaluateNetworkNearFieldInfluenceSingle(
     const Network& network, const Compressibility& flow,
     const Eigen::Vector3d& fieldPoint,
     const NetworkSingularityLayout& layout) {
@@ -221,10 +223,64 @@ NetworkInfluence evaluateNetworkNearFieldInfluence(
     return out;
 }
 
+} // namespace
+
+NetworkInfluence evaluateNetworkNearFieldInfluence(
+    const Network& network, const Compressibility& flow,
+    const Eigen::Vector3d& fieldPoint,
+    const NetworkSingularityLayout& layout,
+    const SymmetryOptions& symmetry) {
+    NetworkInfluence out;
+    if (symmetry.misym == 0 && symmetry.mjsym == 0)
+        return evaluateNetworkNearFieldInfluenceSingle(
+            network, flow, fieldPoint, layout);
+
+    const int nImagesI = (symmetry.misym != 0) ? 2 : 1;
+    const int nImagesJ = (symmetry.mjsym != 0) ? 2 : 1;
+    out.source = Eigen::Matrix<double, 4, Eigen::Dynamic>::Zero(
+        4, layout.source.count);
+    out.doublet = Eigen::Matrix<double, 4, Eigen::Dynamic>::Zero(
+        4, layout.doublet.count);
+
+    for (int isymm = 1; isymm <= nImagesI; ++isymm) {
+        const double sgni = (isymm == 1) ? 1.0 : -1.0;
+        for (int jsymm = 1; jsymm <= nImagesJ; ++jsymm) {
+            const double sgnj = (jsymm == 1) ? 1.0 : -1.0;
+            double sgnk = 1.0;
+            if (isymm * symmetry.misym == -2)
+                sgnk = -sgnk;
+            if (jsymm * symmetry.mjsym == -2)
+                sgnk = -sgnk;
+
+            const Eigen::Vector3d imagePoint(
+                fieldPoint.x(), sgni * fieldPoint.y(),
+                sgnj * fieldPoint.z());
+            const NetworkInfluence row =
+                evaluateNetworkNearFieldInfluenceSingle(
+                    network, flow, imagePoint, layout);
+            if (!row.valid)
+                return NetworkInfluence{};
+
+            // Same sign pattern as the isymm/jsymm loop in the PIC caller:
+            // potential/vx use sgnk, vy uses sgnk*sgni, vz uses sgnk*sgnj.
+            const Eigen::Matrix<double, 4, 1> signs(
+                sgnk, sgnk, sgnk * sgni, sgnk * sgnj);
+            for (Eigen::Index j = 0; j < row.source.cols(); ++j)
+                out.source.col(j) += signs.cwiseProduct(row.source.col(j));
+            for (Eigen::Index j = 0; j < row.doublet.cols(); ++j)
+                out.doublet.col(j) += signs.cwiseProduct(row.doublet.col(j));
+        }
+    }
+
+    out.valid = true;
+    return out;
+}
+
 NetworkAic buildNetworkNearFieldAic(
     const Network& network, const Compressibility& flow,
     const NetworkSingularityLayout& layout,
-    const std::vector<Eigen::Vector3d>& fieldPoints) {
+    const std::vector<Eigen::Vector3d>& fieldPoints,
+    const SymmetryOptions& symmetry) {
     NetworkAic out;
     if (fieldPoints.empty())
         return out;
@@ -238,7 +294,7 @@ NetworkAic buildNetworkNearFieldAic(
     for (int k = 0; k < out.nControlPoints; ++k) {
         const NetworkInfluence row = evaluateNetworkNearFieldInfluence(
             network, flow, fieldPoints[static_cast<std::size_t>(k)],
-            layout);
+            layout, symmetry);
         if (!row.valid)
             return NetworkAic{};
 

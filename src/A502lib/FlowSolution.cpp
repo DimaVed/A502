@@ -92,7 +92,8 @@ SurfaceFlowResult evaluateSurfaceFlow(
     const std::vector<Network>& networks, const Compressibility& flow,
     const GlobalSingularityLayout& layout,
     const GlobalParameterValues& values, bool includeEdgeAndCorner,
-    CpFormula formula, const CpMaterialRatios& material) {
+    CpFormula formula, const CpMaterialRatios& material,
+    const SymmetryOptions& symmetry) {
     SurfaceFlowResult out;
     if (!values.valid || networks.empty() ||
         layout.network.size() != networks.size() ||
@@ -114,7 +115,7 @@ SurfaceFlowResult evaluateSurfaceFlow(
         return out;
 
     const auto globalAic =
-        buildGlobalNearFieldAic(networks, flow, layout, points);
+        buildGlobalNearFieldAic(networks, flow, layout, points, symmetry);
     if (!globalAic.valid)
         return SurfaceFlowResult{};
 

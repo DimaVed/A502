@@ -34,7 +34,8 @@ GlobalBoundarySystem buildGlobalNormalFluxSystemImpl(
     const GlobalSingularityLayout& layout, double cu, double cl,
     double matchingTolerance,
     const std::vector<bool>& includeEdgeAndCorner,
-    bool useNetworkDefaults, const Eigen::Vector3d& reference) {
+    bool useNetworkDefaults, const Eigen::Vector3d& reference,
+    const SymmetryOptions& symmetry) {
     GlobalBoundarySystem out;
     if (networks.empty() || layout.network.size() != networks.size() ||
         includeEdgeAndCorner.size() != networks.size())
@@ -56,7 +57,7 @@ GlobalBoundarySystem buildGlobalNormalFluxSystemImpl(
 
             const GlobalInfluence global =
                 evaluateGlobalNearFieldInfluence(
-                    networks, flow, cp.position, layout);
+                    networks, flow, cp.position, layout, symmetry);
             if (!global.valid)
                 return GlobalBoundarySystem{};
 
@@ -193,32 +194,35 @@ GlobalBoundarySystem buildGlobalNormalFluxSystemImpl(
 GlobalBoundarySystem buildGlobalNormalFluxSystem(
     const std::vector<Network>& networks, const Compressibility& flow,
     const GlobalSingularityLayout& layout, double cu, double cl,
-    double matchingTolerance, bool includeEdgeAndCorner) {
+    double matchingTolerance, bool includeEdgeAndCorner,
+    const SymmetryOptions& symmetry) {
     const std::vector<bool> perNetwork(networks.size(),
                                        includeEdgeAndCorner);
     return buildGlobalNormalFluxSystemImpl(
         networks, flow, layout, cu, cl, matchingTolerance, perNetwork,
-        false, Eigen::Vector3d::Zero());
+        false, Eigen::Vector3d::Zero(), symmetry);
 }
 
 GlobalBoundarySystem buildGlobalNormalFluxSystem(
     const std::vector<Network>& networks, const Compressibility& flow,
     const GlobalSingularityLayout& layout, double cu, double cl,
     double matchingTolerance,
-    const std::vector<bool>& includeEdgeAndCorner) {
+    const std::vector<bool>& includeEdgeAndCorner,
+    const SymmetryOptions& symmetry) {
     return buildGlobalNormalFluxSystemImpl(
         networks, flow, layout, cu, cl, matchingTolerance,
-        includeEdgeAndCorner, false, Eigen::Vector3d::Zero());
+        includeEdgeAndCorner, false, Eigen::Vector3d::Zero(), symmetry);
 }
 
 GlobalBoundarySystem buildGlobalDefaultBoundarySystem(
     const std::vector<Network>& networks, const Compressibility& flow,
     const GlobalSingularityLayout& layout,
     const std::vector<bool>& includeEdgeAndCorner,
-    double matchingTolerance, const Eigen::Vector3d& reference) {
+    double matchingTolerance, const Eigen::Vector3d& reference,
+    const SymmetryOptions& symmetry) {
     return buildGlobalNormalFluxSystemImpl(
         networks, flow, layout, 1.0, 1.0, matchingTolerance,
-        includeEdgeAndCorner, true, reference);
+        includeEdgeAndCorner, true, reference, symmetry);
 }
 
 GlobalSystemScaling buildGlobalSystemScaling(

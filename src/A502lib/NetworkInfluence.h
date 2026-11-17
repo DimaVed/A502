@@ -79,6 +79,15 @@ struct NetworkSingularityLayout {
 NetworkSingularityLayout buildNetworkSingularityLayout(
     const Network& network);
 
+// Flow symmetry planes from $symmetry (A502 misym/mjsym): +1 symmetric,
+// -1 antisymmetric, 0 absent.  misym is the x-z plane (y reflected), mjsym
+// the x-y plane (z reflected).  Image panels share the same singularity
+// parameters; their influence is added with the A502 sign pattern.
+struct SymmetryOptions {
+    int misym{0};
+    int mjsym{0};
+};
+
 struct NetworkInfluence {
     // rows: potential, global vx,vy,vz
     Eigen::Matrix<double, 4, Eigen::Dynamic> source;
@@ -88,11 +97,15 @@ struct NetworkInfluence {
 
 // The network must have at least two points per direction and valid
 // coordinates.  The field point may be anywhere; all panels are evaluated
-// with the subsonic near-field kernel.
+// with the near-field PIC.  With symmetry the image contributions are
+// evaluated at the reflected field points and accumulated with the A502
+// sign factors.  Networks touching a symmetry plane are not yet given the
+// special half-panel treatment.
 NetworkInfluence evaluateNetworkNearFieldInfluence(
     const Network& network, const Compressibility& flow,
     const Eigen::Vector3d& fieldPoint,
-    const NetworkSingularityLayout& layout);
+    const NetworkSingularityLayout& layout,
+    const SymmetryOptions& symmetry = {});
 
 // Raw AIC rows at a list of field points, four rows per point (potential,
 // global vx,vy,vz).  Boundary conditions select/combine these rows later.
@@ -108,6 +121,7 @@ struct NetworkAic {
 NetworkAic buildNetworkNearFieldAic(
     const Network& network, const Compressibility& flow,
     const NetworkSingularityLayout& layout,
-    const std::vector<Eigen::Vector3d>& fieldPoints);
+    const std::vector<Eigen::Vector3d>& fieldPoints,
+    const SymmetryOptions& symmetry = {});
 
 } // namespace a502

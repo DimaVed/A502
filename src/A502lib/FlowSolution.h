@@ -65,6 +65,7 @@ SurfaceFlowResult evaluateSurfaceFlow(
     const GlobalSingularityLayout& layout,
     const GlobalParameterValues& values, bool includeEdgeAndCorner = true,
     CpFormula formula = CpFormula::Linear,
-    const CpMaterialRatios& material = {});
+    const CpMaterialRatios& material = {},
+    const SymmetryOptions& symmetry = {});
 
 } // namespace a502

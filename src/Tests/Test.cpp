@@ -1478,6 +1478,107 @@ TEST_CASE("network influence: inactive singularity types are skipped",
     CHECK_FALSE(onlyDoublet.doubletId.empty());
 }
 
+TEST_CASE("symmetry: image influence signs", "[networkinfluence][symmetry]") {
+    a502::Network net;
+    net.netname = "grid";
+    net.nm = 4;
+    net.nn = 4;
+    net.kt = 12;
+    for (int n = 0; n < 4; ++n) {
+        for (int m = 0; m < 4; ++m) {
+            net.coordinates.push_back(static_cast<double>(m));
+            net.coordinates.push_back(1.0 + static_cast<double>(n));
+            net.coordinates.push_back(0.0);
+        }
+    }
+    const auto flow = a502::Compressibility::fromAngles(0.6, 0.0, 0.0);
+    const auto layout = a502::buildNetworkSingularityLayout(net);
+    const Eigen::Vector3d point(1.5, 2.5, 1.0);
+
+    const auto original = a502::evaluateNetworkNearFieldInfluence(
+        net, flow, point, layout);
+    const auto imageY = a502::evaluateNetworkNearFieldInfluence(
+        net, flow, Eigen::Vector3d(1.5, -2.5, 1.0), layout);
+    const auto imageZ = a502::evaluateNetworkNearFieldInfluence(
+        net, flow, Eigen::Vector3d(1.5, 2.5, -1.0), layout);
+    const auto imageYZ = a502::evaluateNetworkNearFieldInfluence(
+        net, flow, Eigen::Vector3d(1.5, -2.5, -1.0), layout);
+    REQUIRE(original.valid);
+    REQUIRE(imageY.valid);
+    REQUIRE(imageZ.valid);
+    REQUIRE(imageYZ.valid);
+
+    auto signedSum = [](const a502::NetworkInfluence& a,
+                        const Eigen::Vector4d& wa,
+                        const a502::NetworkInfluence& b,
+                        const Eigen::Vector4d& wb,
+                        const a502::NetworkInfluence& c,
+                        const Eigen::Vector4d& wc,
+                        const a502::NetworkInfluence& d,
+                        const Eigen::Vector4d& wd) {
+        a502::NetworkInfluence out;
+        out.source = wa.asDiagonal() * a.source +
+                     wb.asDiagonal() * b.source +
+                     wc.asDiagonal() * c.source +
+                     wd.asDiagonal() * d.source;
+        out.doublet = wa.asDiagonal() * a.doublet +
+                      wb.asDiagonal() * b.doublet +
+                      wc.asDiagonal() * c.doublet +
+                      wd.asDiagonal() * d.doublet;
+        out.valid = true;
+        return out;
+    };
+    const Eigen::Vector4d zero = Eigen::Vector4d::Zero();
+
+    // x-z plane symmetry: y reflected, vy flips.
+    const auto symY = a502::evaluateNetworkNearFieldInfluence(
+        net, flow, point, layout, a502::SymmetryOptions{1, 0});
+    REQUIRE(symY.valid);
+    const auto expectedY = signedSum(
+        original, Eigen::Vector4d(1, 1, 1, 1),
+        imageY, Eigen::Vector4d(1, 1, -1, 1), imageZ, zero, imageYZ, zero);
+    CHECK((symY.source - expectedY.source).norm() < 1e-12);
+    CHECK((symY.doublet - expectedY.doublet).norm() < 1e-12);
+
+    // Antisymmetry flips the potential/vx/vz image signs.
+    const auto antiY = a502::evaluateNetworkNearFieldInfluence(
+        net, flow, point, layout, a502::SymmetryOptions{-1, 0});
+    REQUIRE(antiY.valid);
+    const auto expectedAnti = signedSum(
+        original, Eigen::Vector4d(1, 1, 1, 1),
+        imageY, Eigen::Vector4d(-1, -1, 1, -1), imageZ, zero, imageYZ, zero);
+    CHECK((antiY.source - expectedAnti.source).norm() < 1e-12);
+    CHECK((antiY.doublet - expectedAnti.doublet).norm() < 1e-12);
+
+    // Both symmetry planes.
+    const auto symBoth = a502::evaluateNetworkNearFieldInfluence(
+        net, flow, point, layout, a502::SymmetryOptions{1, 1});
+    REQUIRE(symBoth.valid);
+    const auto expectedBoth = signedSum(
+        original, Eigen::Vector4d(1, 1, 1, 1),
+        imageY, Eigen::Vector4d(1, 1, -1, 1),
+        imageZ, Eigen::Vector4d(1, 1, 1, -1),
+        imageYZ, Eigen::Vector4d(1, 1, -1, -1));
+    CHECK((symBoth.source - expectedBoth.source).norm() < 1e-12);
+    CHECK((symBoth.doublet - expectedBoth.doublet).norm() < 1e-12);
+
+    // AIC rows use the same image sum.
+    const std::vector<Eigen::Vector3d> points = {
+        point, Eigen::Vector3d(2.5, 2.5, 0.5)};
+    const auto aic = a502::buildNetworkNearFieldAic(
+        net, flow, layout, points, a502::SymmetryOptions{1, 0});
+    REQUIRE(aic.valid);
+    for (int k = 0; k < 2; ++k) {
+        const auto expected = a502::evaluateNetworkNearFieldInfluence(
+            net, flow, points[static_cast<std::size_t>(k)], layout,
+            a502::SymmetryOptions{1, 0});
+        CHECK((aic.source.block(4 * k, 0, 4, aic.nSource) -
+               expected.source).norm() < 1e-12);
+        CHECK((aic.doublet.block(4 * k, 0, 4, aic.nDoublet) -
+               expected.doublet).norm() < 1e-12);
+    }
+}
+
 TEST_CASE("global influence: two networks and column offsets",
           "[networkinfluence]") {
     a502::Network net;
@@ -2906,6 +3007,47 @@ TEST_CASE("AeroModel: first end-to-end flow solve", "[aeromodel][flowsolve]") {
         // Equality rows for the shared edge make the system non-square
         // until the redundant parameters are eliminated.
         CHECK_FALSE(model.solveFlow());
+    }
+
+    SECTION("symmetry image influence") {
+        auto makeOffsetModel = [](int misym) {
+            a502::AeroModel model;
+            a502::Network net;
+            net.netname = "grid";
+            net.nm = 4;
+            net.nn = 4;
+            net.kt = 12;
+            for (int n = 0; n < 4; ++n) {
+                for (int m = 0; m < 4; ++m) {
+                    net.coordinates.push_back(static_cast<double>(m));
+                    net.coordinates.push_back(1.0 +
+                                             static_cast<double>(n));
+                    net.coordinates.push_back(0.0);
+                }
+            }
+            model.networks.push_back(net);
+            model.amach = 0.6;
+            model.alpc = 4.0;
+            model.betc = 0.0;
+            model.misym = misym;
+            REQUIRE(model.solve());
+            return model;
+        };
+
+        a502::AeroModel plain = makeOffsetModel(0);
+        a502::AeroModel symmetric = makeOffsetModel(1);
+        REQUIRE(plain.solveFlow());
+        REQUIRE(symmetric.solveFlow());
+        CHECK(symmetric.isFlowSolved());
+        REQUIRE(symmetric.panels.size() == plain.panels.size());
+        bool differs = false;
+        for (std::size_t k = 0; k < symmetric.panels.size(); ++k) {
+            CHECK(std::isfinite(symmetric.panels[k].cp));
+            if (std::abs(symmetric.panels[k].cp -
+                         plain.panels[k].cp) > 1e-8)
+                differs = true;
+        }
+        CHECK(differs);
     }
 }
 

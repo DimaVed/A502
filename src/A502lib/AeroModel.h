@@ -184,9 +184,11 @@ public:
     // equivalence classes are not yet eliminated.  It applies the first
     // non-zero per-kt default left/right boundary option from inbc()/
     // bcopt() (air material factors, nbin/upper-lower selection not yet
-    // modelled) and writes the resulting linear Cp into Panel::cp.  Returns
-    // false and leaves the placeholder Cp untouched when the system is not
-    // solvable.
+    // modelled) and writes the resulting linear Cp into Panel::cp.  Flow
+    // symmetry (misym/mjsym) is included as image influence; networks
+    // touching a symmetry plane still need A502's half-panel treatment.
+    // Returns false and leaves the placeholder Cp untouched when the system
+    // is not solvable.
     bool solveFlow();
     bool isFlowSolved() const;
 

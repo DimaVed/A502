@@ -35,7 +35,8 @@ struct GlobalBoundarySystem {
 GlobalBoundarySystem buildGlobalNormalFluxSystem(
     const std::vector<Network>& networks, const Compressibility& flow,
     const GlobalSingularityLayout& layout, double cu, double cl,
-    double matchingTolerance, bool includeEdgeAndCorner = false);
+    double matchingTolerance, bool includeEdgeAndCorner = false,
+    const SymmetryOptions& symmetry = {});
 
 // Same assembly with a per-network choice between panel-centre-only and
 // all-control-point boundary rows.
@@ -43,7 +44,8 @@ GlobalBoundarySystem buildGlobalNormalFluxSystem(
     const std::vector<Network>& networks, const Compressibility& flow,
     const GlobalSingularityLayout& layout, double cu, double cl,
     double matchingTolerance,
-    const std::vector<bool>& includeEdgeAndCorner);
+    const std::vector<bool>& includeEdgeAndCorner,
+    const SymmetryOptions& symmetry = {});
 
 // Assembly using the per-kt default left/right boundary options from inbc().
 // The first non-zero option among nlopt1/nlopt2 is used for each control
@@ -55,7 +57,8 @@ GlobalBoundarySystem buildGlobalDefaultBoundarySystem(
     const GlobalSingularityLayout& layout,
     const std::vector<bool>& includeEdgeAndCorner,
     double matchingTolerance = 1.0e-10,
-    const Eigen::Vector3d& reference = Eigen::Vector3d::Zero());
+    const Eigen::Vector3d& reference = Eigen::Vector3d::Zero(),
+    const SymmetryOptions& symmetry = {});
 
 // Diagonal row/column equilibration of the global matrix:
 //   A_scaled = diag(row) * A * diag(column),

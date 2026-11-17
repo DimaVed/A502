@@ -1879,8 +1879,10 @@ bool AeroModel::solveFlow() {
         includeEdgeAndCorner[k] = doubletOnly;
     }
 
+    const SymmetryOptions symmetry{misym, mjsym};
     const GlobalBoundarySystem system = buildGlobalDefaultBoundarySystem(
-        nets, flow, layout, includeEdgeAndCorner, 1.0e-10);
+        nets, flow, layout, includeEdgeAndCorner, 1.0e-10,
+        Eigen::Vector3d::Zero(), symmetry);
     if (!system.valid) {
         BLOG(warning) << "solveFlow(): boundary system assembly failed";
         return false;
@@ -1904,7 +1906,8 @@ bool AeroModel::solveFlow() {
     }
 
     const SurfaceFlowResult surface = evaluateSurfaceFlow(
-        nets, flow, layout, values, true);
+        nets, flow, layout, values, true, CpFormula::Linear,
+        CpMaterialRatios{}, symmetry);
     if (!surface.valid) {
         BLOG(warning) << "solveFlow(): surface flow evaluation failed";
         return false;

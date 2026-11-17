@@ -53,7 +53,8 @@ GlobalSingularityLayout buildGlobalSingularityLayout(
 GlobalInfluence evaluateGlobalNearFieldInfluence(
     const std::vector<Network>& networks, const Compressibility& flow,
     const Eigen::Vector3d& fieldPoint,
-    const GlobalSingularityLayout& layout) {
+    const GlobalSingularityLayout& layout,
+    const SymmetryOptions& symmetry) {
     GlobalInfluence out;
     if (networks.empty() || layout.network.size() != networks.size() ||
         layout.sourceOffset.size() != networks.size() ||
@@ -67,7 +68,7 @@ GlobalInfluence evaluateGlobalNearFieldInfluence(
 
     for (std::size_t k = 0; k < networks.size(); ++k) {
         const NetworkInfluence row = evaluateNetworkNearFieldInfluence(
-            networks[k], flow, fieldPoint, layout.network[k]);
+            networks[k], flow, fieldPoint, layout.network[k], symmetry);
         if (!row.valid)
             return GlobalInfluence{};
 
@@ -88,7 +89,8 @@ GlobalInfluence evaluateGlobalNearFieldInfluence(
 GlobalAic buildGlobalNearFieldAic(
     const std::vector<Network>& networks, const Compressibility& flow,
     const GlobalSingularityLayout& layout,
-    const std::vector<Eigen::Vector3d>& fieldPoints) {
+    const std::vector<Eigen::Vector3d>& fieldPoints,
+    const SymmetryOptions& symmetry) {
     GlobalAic out;
     if (fieldPoints.empty() ||
         (layout.activeSource <= 0 && layout.activeDoublet <= 0))
@@ -103,7 +105,7 @@ GlobalAic buildGlobalNearFieldAic(
     for (int k = 0; k < out.nControlPoints; ++k) {
         const GlobalInfluence row = evaluateGlobalNearFieldInfluence(
             networks, flow, fieldPoints[static_cast<std::size_t>(k)],
-            layout);
+            layout, symmetry);
         if (!row.valid)
             return GlobalAic{};
 
