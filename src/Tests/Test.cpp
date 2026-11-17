@@ -889,6 +889,44 @@ TEST_CASE("network influence: outer splines and near-field PIC",
           Catch::Approx(doubletPotential).epsilon(1e-6));
 }
 
+TEST_CASE("network AIC: rows at all control points", "[networkinfluence]") {
+    a502::Network net;
+    net.netname = "grid";
+    net.nm = 8;
+    net.nn = 8;
+    for (int n = 0; n < 8; ++n) {
+        for (int m = 0; m < 8; ++m) {
+            net.coordinates.push_back(static_cast<double>(m));
+            net.coordinates.push_back(static_cast<double>(n));
+            net.coordinates.push_back(0.0);
+        }
+    }
+
+    const auto flow = a502::Compressibility::fromAngles(0.0, 0.0, 0.0);
+    const auto layout = a502::buildNetworkSingularityLayout(net);
+    const auto controlPoints = a502::buildNetworkControlPoints(net);
+    REQUIRE(controlPoints.size() == 81);
+
+    std::vector<Eigen::Vector3d> positions;
+    positions.reserve(controlPoints.size());
+    for (const auto& cp : controlPoints)
+        positions.push_back(cp.position);
+
+    const auto aic =
+        a502::buildNetworkNearFieldAic(net, flow, layout, positions);
+    REQUIRE(aic.valid);
+    CHECK(aic.nControlPoints == 81);
+    CHECK(aic.nSource == 49);
+    CHECK(aic.nDoublet == 81);
+    REQUIRE(aic.source.rows() == 4 * 81);
+    REQUIRE(aic.source.cols() == 49);
+    REQUIRE(aic.doublet.rows() == 4 * 81);
+    REQUIRE(aic.doublet.cols() == 81);
+
+    CHECK(aic.source.allFinite());
+    CHECK(aic.doublet.allFinite());
+}
+
 TEST_CASE("control points: single square network", "[controlpoints]") {
     a502::Network net;
     net.netname = "plate";

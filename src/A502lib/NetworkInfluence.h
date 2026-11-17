@@ -59,4 +59,20 @@ NetworkInfluence evaluateNetworkNearFieldInfluence(
     const Eigen::Vector3d& fieldPoint,
     const NetworkSingularityLayout& layout);
 
+// Raw AIC rows at a list of field points, four rows per point (potential,
+// global vx,vy,vz).  Boundary conditions select/combine these rows later.
+struct NetworkAic {
+    int nControlPoints{0};
+    int nSource{0};
+    int nDoublet{0};
+    Eigen::MatrixXd source;
+    Eigen::MatrixXd doublet;
+    bool valid{false};
+};
+
+NetworkAic buildNetworkNearFieldAic(
+    const Network& network, const Compressibility& flow,
+    const NetworkSingularityLayout& layout,
+    const std::vector<Eigen::Vector3d>& fieldPoints);
+
 } // namespace a502

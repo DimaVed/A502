@@ -122,4 +122,33 @@ NetworkInfluence evaluateNetworkNearFieldInfluence(
     return out;
 }
 
+NetworkAic buildNetworkNearFieldAic(
+    const Network& network, const Compressibility& flow,
+    const NetworkSingularityLayout& layout,
+    const std::vector<Eigen::Vector3d>& fieldPoints) {
+    NetworkAic out;
+    if (fieldPoints.empty())
+        return out;
+
+    out.nControlPoints = static_cast<int>(fieldPoints.size());
+    out.nSource = layout.source.count;
+    out.nDoublet = layout.doublet.count;
+    out.source = Eigen::MatrixXd::Zero(4 * out.nControlPoints, out.nSource);
+    out.doublet = Eigen::MatrixXd::Zero(4 * out.nControlPoints, out.nDoublet);
+
+    for (int k = 0; k < out.nControlPoints; ++k) {
+        const NetworkInfluence row = evaluateNetworkNearFieldInfluence(
+            network, flow, fieldPoints[static_cast<std::size_t>(k)],
+            layout);
+        if (!row.valid)
+            return NetworkAic{};
+
+        out.source.block(4 * k, 0, 4, out.nSource) = row.source;
+        out.doublet.block(4 * k, 0, 4, out.nDoublet) = row.doublet;
+    }
+
+    out.valid = true;
+    return out;
+}
+
 } // namespace a502
