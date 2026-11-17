@@ -2,11 +2,13 @@
 
 // Matching.h
 // ----------
-// First, simple network-edge matching: detect full edges that coincide
+// First network-edge matching port: detect full edges that coincide
 // geometrically (same or reversed point order) and equate the corresponding
-// doublet parameters.  This covers the common wing/wing or wing/wake full-
-// edge abutments; partial overlaps and multi-network intersection points
-// still need the general abutment machinery from panair.f90.
+// doublet parameters.  Constraints are collected into equivalence classes
+// (union-find), as in A502's abutment processing, so an edge/corner shared
+// by several networks contributes only the independent rows.  Partial
+// overlaps, abutment intersection points, and difference-type matching
+// conditions still need the general machinery from panair.f90.
 
 #define EIGEN_NO_DEBUG
 

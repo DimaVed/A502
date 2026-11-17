@@ -1761,6 +1761,73 @@ TEST_CASE("matching: source-only networks do not match doublets",
     CHECK(rows.rhs.size() == 0);
 }
 
+TEST_CASE("matching: three faces share one corner class", "[matching]") {
+    auto makeGrid = [](int axis, const char* name) {
+        a502::Network net;
+        net.netname = name;
+        net.nm = 4;
+        net.nn = 4;
+        for (int n = 0; n < 4; ++n) {
+            for (int m = 0; m < 4; ++m) {
+                const double a = static_cast<double>(m);
+                const double b = static_cast<double>(n);
+                if (axis == 0) { // z = 0 plane
+                    net.coordinates.insert(net.coordinates.end(),
+                                           {a, b, 0.0});
+                } else if (axis == 1) { // y = 0 plane
+                    net.coordinates.insert(net.coordinates.end(),
+                                           {a, 0.0, b});
+                } else { // x = 0 plane
+                    net.coordinates.insert(net.coordinates.end(),
+                                           {0.0, a, b});
+                }
+            }
+        }
+        return net;
+    };
+
+    // Three mutually orthogonal faces meeting at the origin.  Every pair
+    // shares one full edge, and all three share the origin corner.
+    const std::vector<a502::Network> networks = {
+        makeGrid(0, "a"), makeGrid(1, "b"), makeGrid(2, "c")};
+    const auto edges = a502::buildNetworkEdges(networks);
+    REQUIRE(edges.size() == 12);
+    const auto matches = a502::findFullEdgeMatches(edges, 1e-10);
+    REQUIRE(matches.size() == 3);
+
+    const auto layout =
+        a502::buildGlobalSingularityLayout(networks);
+    REQUIRE(layout.totalDoublet == 75);
+    const auto rows =
+        a502::buildEdgeDoubletMatchingRows(networks, layout, matches);
+    REQUIRE(rows.valid);
+
+    // 3 matched edges x (3 intervals + 2 corners), minus the dependent
+    // third constraint at the shared origin.
+    REQUIRE(rows.nRows == 14);
+    REQUIRE(rows.doublet.rows() == 14);
+    REQUIRE(rows.doublet.cols() == 75);
+    for (int r = 0; r < rows.nRows; ++r)
+        CHECK(rows.doublet.row(r).cwiseAbs().sum() ==
+              Catch::Approx(2.0).epsilon(1e-14));
+
+    Eigen::FullPivLU<Eigen::MatrixXd> lu(rows.doublet);
+    CHECK(lu.rank() == rows.nRows);
+
+    // The origin corner parameters of the three networks are in one class:
+    // two independent rows reference them.
+    const int base = layout.network[0].doublet.nCenters;
+    const int a0 = layout.doubletOffset[0] + base;
+    const int b0 = layout.doubletOffset[1] + base;
+    const int c0 = layout.doubletOffset[2] + base;
+    CHECK(rows.doublet.col(a0).cwiseAbs().sum() ==
+          Catch::Approx(2.0).epsilon(1e-14));
+    CHECK(rows.doublet.col(b0).cwiseAbs().sum() ==
+          Catch::Approx(1.0).epsilon(1e-14));
+    CHECK(rows.doublet.col(c0).cwiseAbs().sum() ==
+          Catch::Approx(1.0).epsilon(1e-14));
+}
+
 TEST_CASE("global boundary system: active columns and matching rows",
           "[globalsystem]") {
     auto makeGrid = [](double y0, int kt, const char* name) {

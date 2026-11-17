@@ -1,6 +1,7 @@
 // Matching.cpp
 // ------------
-// Simple full-edge coincidence detection and doublet-parameter matching.
+// Full-edge coincidence detection and doublet-parameter matching using
+// equivalence classes.
 
 #include "Matching.h"
 
@@ -9,7 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <set>
+#include <numeric>
 #include <utility>
 
 namespace a502 {
@@ -113,18 +114,42 @@ MatchingRows buildEdgeDoubletMatchingRows(
     const std::array<int, 4> startCorner{{0, 1, 3, 0}};
     const std::array<int, 4> endCorner{{1, 2, 2, 3}};
     std::vector<Eigen::VectorXd> rows;
-    std::set<std::pair<int, int>> cornerPairs;
+
+    // Equivalence classes of matched doublet parameters, as in A502's
+    // abutment processing.  A constraint joining two parameters that are
+    // already in the same class is implied by the class representative
+    // rows and is not emitted again (otherwise corners shared by three or
+    // more networks would add dependent rows).
+    std::vector<int> parent(
+        static_cast<std::size_t>(std::max(layout.totalDoublet, 0)));
+    std::iota(parent.begin(), parent.end(), 0);
+    auto findRoot = [&](int id) {
+        int root = id;
+        while (parent[static_cast<std::size_t>(root)] != root)
+            root = parent[static_cast<std::size_t>(root)];
+        while (parent[static_cast<std::size_t>(id)] != id) {
+            const int next = parent[static_cast<std::size_t>(id)];
+            parent[static_cast<std::size_t>(id)] = root;
+            id = next;
+        }
+        return root;
+    };
 
     auto addRow = [&](int globalA, int globalB) {
         if (globalA < 0 || globalB < 0 ||
             globalA >= layout.totalDoublet ||
             globalB >= layout.totalDoublet)
             return false;
+        const int rootA = findRoot(globalA);
+        const int rootB = findRoot(globalB);
+        if (rootA == rootB)
+            return true; // already implied by the equivalence class
         Eigen::VectorXd row =
             Eigen::VectorXd::Zero(layout.totalDoublet);
         row(globalA) += 1.0;
         row(globalB) -= 1.0;
         rows.push_back(std::move(row));
+        parent[static_cast<std::size_t>(rootB)] = rootA;
         return true;
     };
 
@@ -192,9 +217,9 @@ MatchingRows buildEdgeDoubletMatchingRows(
         const std::pair<int, int> p1 =
             match.reversed ? std::make_pair(a1, b0)
                            : std::make_pair(a1, b1);
-        if (cornerPairs.insert(p0).second && !addRow(p0.first, p0.second))
+        if (!addRow(p0.first, p0.second))
             return MatchingRows{};
-        if (cornerPairs.insert(p1).second && !addRow(p1.first, p1.second))
+        if (!addRow(p1.first, p1.second))
             return MatchingRows{};
     }
 
