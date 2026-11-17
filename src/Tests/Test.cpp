@@ -9,6 +9,7 @@
 
 #include "AeroModel.h"
 #include "Compressibility.h"
+#include "Influence.h"
 #include "PanelGeometry.h"
 #include "PanelParameters.h"
 #include "OuterSplines.h"
@@ -392,6 +393,47 @@ TEST_CASE("panel scaled frames", "[compressibility][refloc]") {
             }
         }
     }
+}
+
+TEST_CASE("influence: compressible panel diameter and PIC level",
+          "[influence]") {
+    a502::Network net;
+    net.netname = "square";
+    net.nm = 2;
+    net.nn = 2;
+    net.coordinates = {0.0, 0.0, 0.0,
+                       1.0, 0.0, 0.0,
+                       0.0, 1.0, 0.0,
+                       1.0, 1.0, 0.0};
+
+    const auto panel =
+        a502::buildPanelGeometry(net.coordinates, 2, 2, 0, 0);
+    REQUIRE_FALSE(panel.degenerate);
+
+    const auto m0 = a502::Compressibility::fromAngles(0.0, 0.0, 0.0);
+    CHECK(a502::compressedPanelDiameter(panel, m0) ==
+          Catch::Approx(std::sqrt(2.0)).epsilon(1e-12));
+
+    const Eigen::Vector3d center = panel.cp[8];
+    auto atHeight = [&](double h) -> Eigen::Vector3d {
+        return center + Eigen::Vector3d(0.0, 0.0, h);
+    };
+
+    // eps = sqrt(2)/(2 h) for this panel at M = 0.
+    CHECK(a502::influenceLevel(panel, m0, center) == 6);
+    CHECK(a502::influenceLevel(panel, m0, atHeight(0.5)) == 6);
+    CHECK(a502::influenceLevel(panel, m0, atHeight(1.0)) == 5);
+    CHECK(a502::influenceLevel(panel, m0, atHeight(2.0)) == 4);
+    CHECK(a502::influenceLevel(panel, m0, atHeight(5.0)) == 3);
+    CHECK(a502::influenceLevel(panel, m0, atHeight(10.0)) == 2);
+    CHECK(a502::influenceLevel(panel, m0, atHeight(100.0)) == 1);
+
+    // Compressibility changes the diameter but not the near/far ordering.
+    const auto m06 = a502::Compressibility::fromAngles(0.6, 0.0, 0.0);
+    CHECK(a502::compressedPanelDiameter(panel, m06) ==
+          Catch::Approx(2.0 * std::sqrt(0.41)).epsilon(1e-12));
+    CHECK(a502::influenceLevel(panel, m06, atHeight(0.1)) == 6);
+    CHECK(a502::influenceLevel(panel, m06, atHeight(100.0)) == 1);
 }
 
 TEST_CASE("control points: single square network", "[controlpoints]") {
