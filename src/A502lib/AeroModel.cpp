@@ -8,6 +8,7 @@
 #include "Logger.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <fstream>
@@ -798,6 +799,9 @@ void AeroModel::extractNetworks() {
             extractPointsSection(sec);
         else if (sec.keywordNorm == "circular" || sec.keywordNorm == "cir")
             extractCircularSection(sec);
+        else if (sec.keywordNorm == "quadrilateral" ||
+                 sec.keywordNorm == "qua")
+            extractQuadrilateralSection(sec);
         else if (sec.keywordNorm == "trailing" || sec.keywordNorm == "tra")
             extractTrailingSection(sec);
     }
@@ -1076,6 +1080,196 @@ void AeroModel::extractCircularSection(const Section& sec) {
         }
     }
     finishBlock();
+}
+
+void AeroModel::extractQuadrilateralSection(const Section& sec) {
+    // Port of quadnt(): bilinear map from the unit square to the four given
+    // corner points, with row/column division fractions ypc/xpc.  The corner
+    // cards follow the kt card directly ("6E10.0,10X,A" for corners 1-2 and
+    // the network name; the second card holds corners 3-4).  Labeled division
+    // groups are "=nrow", "=ypc", "=ncol", "=xpc".
+    int sectionKn = 0;
+    int sectionKt = 0;
+    double sectionCpnorm = 2.0;
+    bool pendingKn = false;
+    bool pendingKt = false;
+    bool afterKt = false;
+    std::array<Eigen::Vector3d, 4> corners{};
+    int cornerCount = 0;
+    std::string netname;
+    int nrow = 0;
+    int ncol = 0;
+    std::vector<double> ypc;
+    std::vector<double> xpc;
+
+    auto groupValues = [&](std::size_t index) {
+        std::vector<Value> values = sec.entries[index].values;
+        for (std::size_t j = index + 1;
+             j < sec.entries.size() &&
+             sec.entries[j].kind == EntryKind::FreeData;
+             ++j) {
+            values.insert(values.end(),
+                          sec.entries[j].values.begin(),
+                          sec.entries[j].values.end());
+        }
+        return values;
+    };
+    auto numbers = [](const std::vector<Value>& values) {
+        std::vector<double> out;
+        for (const Value& v : values)
+            if (v.numeric)
+                out.push_back(v.number);
+        return out;
+    };
+
+    for (std::size_t ei = 0; ei < sec.entries.size(); ++ei) {
+        const Entry& e = sec.entries[ei];
+        if (e.kind == EntryKind::Variable && !e.names.empty()) {
+            const std::string& first = e.names.front();
+            if (first == "kn") {
+                pendingKn = true;
+            } else if (first == "kt") {
+                pendingKt = true;
+            } else if (first == "nrow") {
+                afterKt = false;
+                const std::vector<double> values = numbers(groupValues(ei));
+                if (!values.empty())
+                    nrow = static_cast<int>(
+                        std::lround(values.front()));
+            } else if (first == "ypc") {
+                afterKt = false;
+                ypc = numbers(groupValues(ei));
+            } else if (first == "ncol") {
+                afterKt = false;
+                const std::vector<double> values = numbers(groupValues(ei));
+                if (!values.empty())
+                    ncol = static_cast<int>(
+                        std::lround(values.front()));
+            } else if (first == "xpc") {
+                afterKt = false;
+                xpc = numbers(groupValues(ei));
+            }
+            continue;
+        }
+        if (e.kind != EntryKind::FreeData)
+            continue;
+
+        if (pendingKn) {
+            const std::vector<double> values = numbers(e.values);
+            if (!values.empty()) {
+                sectionKn = static_cast<int>(
+                    std::lround(values.front()));
+                if (values.size() >= 2)
+                    sectionCpnorm = values.back();
+            }
+            pendingKn = false;
+        } else if (pendingKt) {
+            const std::vector<double> values = numbers(e.values);
+            if (!values.empty())
+                sectionKt = static_cast<int>(
+                    std::lround(values.front()));
+            pendingKt = false;
+            afterKt = true;
+        } else if (afterKt && cornerCount < 4) {
+            const std::vector<double> values = numbers(e.values);
+            if (values.size() < 6)
+                continue;
+            corners[static_cast<std::size_t>(cornerCount)] =
+                Eigen::Vector3d(values[0], values[1], values[2]);
+            corners[static_cast<std::size_t>(cornerCount + 1)] =
+                Eigen::Vector3d(values[3], values[4], values[5]);
+            cornerCount += 2;
+            for (const Value& v : e.values) {
+                if (!v.numeric) {
+                    netname = v.text;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (cornerCount != 4 || nrow < 2 || ncol < 2 ||
+        static_cast<int>(ypc.size()) < nrow ||
+        static_cast<int>(xpc.size()) < ncol || netname.empty()) {
+        BLOG(warning) << "$quadrilateral: incomplete network definition";
+        return;
+    }
+
+    Network net;
+    net.netname = netname;
+    net.nm = nrow;
+    net.nn = ncol;
+    net.kn = sectionKn;
+    net.kt = sectionKt;
+    net.cpnorm = sectionCpnorm;
+    net.coordinates.assign(
+        static_cast<std::size_t>(3) * nrow * ncol, 0.0);
+
+    const Eigen::Vector3d& c1 = corners[0];
+    const Eigen::Vector3d& c2 = corners[1];
+    const Eigen::Vector3d& c3 = corners[2];
+    const Eigen::Vector3d& c4 = corners[3];
+
+    for (int j = 0; j < ncol; ++j) {
+        const double eps = xpc[static_cast<std::size_t>(j)];
+        const double ceps = 1.0 - eps;
+        for (int i = 0; i < nrow; ++i) {
+            const double eta = ypc[static_cast<std::size_t>(i)];
+            const double ceta = 1.0 - eta;
+            const double ea = ceps * ceta;
+            const double eb = eps * ceta;
+            const double ec = eps * eta;
+            const double ed = ceps * eta;
+            const std::size_t base =
+                static_cast<std::size_t>(3) *
+                static_cast<std::size_t>(i + nrow * j);
+            net.coordinates[base] =
+                c1.x() * ea + c2.x() * eb + c3.x() * ec + c4.x() * ed;
+            net.coordinates[base + 1] =
+                c1.y() * ea + c2.y() * eb + c3.y() * ec + c4.y() * ed;
+        }
+    }
+
+    const bool anyZ = c1.z() != 0.0 || c2.z() != 0.0 ||
+                      c3.z() != 0.0 || c4.z() != 0.0;
+    if (anyZ) {
+        // Slant-wing z interpolation from quadnt().
+        const double zas = c2.z() - c1.z();
+        const double zbs = c3.z() - c4.z();
+        const double da =
+            std::hypot(c2.x() - c1.x(), c2.y() - c1.y());
+        const double db =
+            std::hypot(c3.x() - c4.x(), c3.y() - c4.y());
+        const double zda = (da != 0.0) ? zas / da : 0.0;
+        const double zdb = (db != 0.0) ? zbs / db : 0.0;
+        const int nrm1 = nrow - 1;
+        for (int j = 0; j < ncol; ++j) {
+            const std::size_t k0 =
+                static_cast<std::size_t>(nrow) *
+                static_cast<std::size_t>(j);
+            const double xa = net.coordinates[3 * k0];
+            const double ya = net.coordinates[3 * k0 + 1];
+            const double dr = std::hypot(xa - c1.x(), ya - c1.y());
+            const double za = c1.z() + dr * zda;
+            const std::size_t kb = k0 + static_cast<std::size_t>(nrm1);
+            const double xb = net.coordinates[3 * kb];
+            const double yb = net.coordinates[3 * kb + 1];
+            const double ds = std::hypot(xb - c4.x(), yb - c4.y());
+            const double zb = c4.z() + ds * zdb;
+            const double dd = std::hypot(xb - xa, yb - ya);
+            const double zd = (dd != 0.0) ? (zb - za) / dd : 0.0;
+            for (int i = 0; i < nrow; ++i) {
+                const std::size_t index =
+                    k0 + static_cast<std::size_t>(i);
+                const double xc = net.coordinates[3 * index];
+                const double yc = net.coordinates[3 * index + 1];
+                const double dt = std::hypot(xc - xa, yc - ya);
+                net.coordinates[3 * index + 2] = za + dt * zd;
+            }
+        }
+    }
+
+    networks.push_back(std::move(net));
 }
 
 void AeroModel::extractTrailingSection(const Section& sec) {

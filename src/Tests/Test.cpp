@@ -193,6 +193,82 @@ TEST_CASE("$points: synthetic deck and coordinate order", "[parser][points]") {
     fs::remove(deck, ec);
 }
 
+TEST_CASE("$quadrilateral: bilinear grid", "[parser][quadrilateral]") {
+    const fs::path deck = fs::temp_directory_path() / "a502_quad_test.inp";
+    auto writeDeck = [&](const std::string& corners) {
+        std::ofstream out(deck);
+        REQUIRE(out.is_open());
+        out << "$quadrilateral\n"
+               "=kn\n"
+               "1.\n"
+               "=kt\n"
+               "1.\n"
+            << corners
+            << "=nrow\n"
+               "3.\n"
+               "=ypc(1) ypc(2) ypc(3)\n"
+               "0. 0.5 1.\n"
+               "=ncol\n"
+               "3.\n"
+               "=xpc(1) xpc(2) xpc(3)\n"
+               "0. 0.5 1.\n";
+    };
+
+    SECTION("flat trapezoid") {
+        writeDeck("0. 0. 0. 2. 0. 0. quad\n"
+                  "1. 1. 0. 0. 1. 0.\n");
+        a502::AeroModel model;
+        model.parse(deck.string());
+        REQUIRE(model.networks.size() == 1);
+        const auto& net = model.networks[0];
+        CHECK(net.netname == "quad");
+        CHECK(net.kt == 1);
+        CHECK(net.nm == 3);
+        CHECK(net.nn == 3);
+        REQUIRE(net.coordinates.size() == 27);
+
+        auto point = [&](int i, int j) {
+            const std::size_t base =
+                static_cast<std::size_t>(3) * (i + net.nm * j);
+            return Eigen::Vector3d(net.coordinates[base],
+                                   net.coordinates[base + 1],
+                                   net.coordinates[base + 2]);
+        };
+        CHECK(point(0, 0).isApprox(Eigen::Vector3d(0, 0, 0), 1e-14));
+        CHECK(point(2, 0).isApprox(Eigen::Vector3d(0, 1, 0), 1e-14));
+        CHECK(point(0, 2).isApprox(Eigen::Vector3d(2, 0, 0), 1e-14));
+        CHECK(point(2, 2).isApprox(Eigen::Vector3d(1, 1, 0), 1e-14));
+        // Bilinear map at the centre is the average of the four corners.
+        CHECK(point(1, 1).isApprox(Eigen::Vector3d(0.75, 0.5, 0), 1e-14));
+
+        REQUIRE(model.solve());
+        CHECK(model.totalPanels == 4);
+    }
+
+    SECTION("slant wing z interpolation") {
+        writeDeck("0. 0. 0. 2. 0. 1. wing\n"
+                  "1. 1. 2. 0. 1. 1.\n");
+        a502::AeroModel model;
+        model.parse(deck.string());
+        REQUIRE(model.networks.size() == 1);
+        const auto& net = model.networks[0];
+        REQUIRE(net.coordinates.size() == 27);
+        auto z = [&](int i, int j) {
+            return net.coordinates[static_cast<std::size_t>(
+                                       3 * (i + net.nm * j) + 2)];
+        };
+        CHECK(z(0, 0) == Catch::Approx(0.0).epsilon(1e-14));
+        CHECK(z(2, 0) == Catch::Approx(1.0).epsilon(1e-14));
+        CHECK(z(0, 2) == Catch::Approx(1.0).epsilon(1e-14));
+        CHECK(z(2, 2) == Catch::Approx(2.0).epsilon(1e-14));
+        CHECK(z(1, 0) == Catch::Approx(0.5).epsilon(1e-14));
+        CHECK(z(1, 2) == Catch::Approx(1.5).epsilon(1e-14));
+    }
+
+    std::error_code ec;
+    fs::remove(deck, ec);
+}
+
 TEST_CASE("$circular sections generate networks", "[parser][circular]") {
     // nac6.inp has no $points sections; its networks come from $circular.
     a502::AeroModel model;
