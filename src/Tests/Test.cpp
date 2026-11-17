@@ -12,6 +12,7 @@
 #include "PanelGeometry.h"
 #include "PanelParameters.h"
 #include "OuterSplines.h"
+#include "EdgeSplines.h"
 #include "SubpanelSplines.h"
 #include "TriangleInterpolation.h"
 
@@ -1062,4 +1063,47 @@ TEST_CASE("doublet outer spline: sample deep interior panel",
         spline.coefficients * ones;
     for (int r = 0; r < 9; ++r)
         CHECK(constant(r) == Catch::Approx(1.0).epsilon(1e-8));
+}
+
+TEST_CASE("edgls: edge quadratic reproduction", "[splines][edge]") {
+    const std::array<double, 4> d = {1.0, 1.0, 1.0, 1.0};
+    const std::array<double, 4> w = {1.0, 1.0, 1.0, 1.0};
+    const auto ls = a502::edgls(d, w);
+    REQUIRE(ls.valid);
+
+    const double x1 = -1.5;
+    const double x2 = -0.5;
+    const double x3 = 0.5;
+    const double x4 = 1.5;
+
+    auto quad = [](double x) { return 1.0 + 2.0 * x + 3.0 * x * x; };
+    CHECK(ls.a[0] * quad(x1) + ls.a[1] * quad(x2) +
+          ls.a[2] * quad(x3) + ls.a[3] * quad(x4) ==
+          Catch::Approx(quad(0.0)).epsilon(1e-12));
+
+    auto lin = [](double x) { return 4.0 - 1.5 * x; };
+    CHECK(ls.a[0] * lin(x1) + ls.a[1] * lin(x2) +
+          ls.a[2] * lin(x3) + ls.a[3] * lin(x4) ==
+          Catch::Approx(lin(0.0)).epsilon(1e-12));
+
+    // Non-uniform spacing and weights: a quadratic is still reproduced exactly.
+    const std::array<double, 4> du = {0.5, 1.2, 0.8, 0.3};
+    const std::array<double, 4> wu = {0.7, 1.0, 1.0, 2.3};
+    const auto lsu = a502::edgls(du, wu);
+    REQUIRE(lsu.valid);
+    const double xu1 = -1.2 - 0.25;
+    const double xu2 = -0.6;
+    const double xu3 = 0.4;
+    const double xu4 = 0.8 + 0.15;
+    CHECK(lsu.a[0] * quad(xu1) + lsu.a[1] * quad(xu2) +
+          lsu.a[2] * quad(xu3) + lsu.a[3] * quad(xu4) ==
+          Catch::Approx(quad(0.0)).epsilon(1e-12));
+
+    // Coincident inner points.
+    const std::array<double, 4> dz = {1.0, 0.0, 0.0, 1.0};
+    const auto lsz = a502::edgls(dz, w);
+    CHECK(lsz.a[0] == 0.0);
+    CHECK(lsz.a[1] == 0.5);
+    CHECK(lsz.a[2] == 0.5);
+    CHECK(lsz.a[3] == 0.0);
 }
