@@ -52,6 +52,36 @@ double pressureCoefficient(
     return 0.0;
 }
 
+CpMaterialRatios materialRatios(const MaterialProperties& material,
+                                const Compressibility& flow) {
+    CpMaterialRatios out;
+    out.temperature =
+        material.temperatureRatio > 0.0 ? material.temperatureRatio : 1.0;
+    out.pressure =
+        material.pressureRatio > 0.0 ? material.pressureRatio : 1.0;
+
+    constexpr double gamma = 1.4;
+    if (flow.mach < 0.01)
+        return out; // air
+
+    const double qsqair = flow.compd.squaredNorm();
+    const double amach2 = flow.mach * flow.mach;
+    if (!(qsqair > 0.0) || !(amach2 > 0.0))
+        return out;
+
+    const double f0 = std::pow(out.pressure, (1.0 - gamma) / gamma);
+    const double density = 1.0 / (f0 * out.temperature);
+    const double qsqmat = qsqair * 2.0 * out.temperature *
+                          (1.0 + 0.5 * (gamma - 1.0) * amach2 - f0) /
+                          ((gamma - 1.0) * amach2);
+    if (!(qsqmat > 0.0))
+        return out;
+
+    out.velocity = std::sqrt(qsqmat / qsqair);
+    out.cpFactor = density * out.velocity * out.velocity;
+    return out;
+}
+
 double linearPressureCoefficient(const Eigen::Vector3d& velocity,
                                  const Eigen::Vector3d& freestream) {
     return pressureCoefficient(velocity - freestream, freestream, 0.0,

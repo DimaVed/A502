@@ -181,6 +181,57 @@ TEST_CASE("$circular is not a $points section", "[parser][points]") {
     CHECK(model.networks.empty());
 }
 
+TEST_CASE("materials: nac6 parsing and matvfs ratios", "[parser][materials]") {
+    a502::AeroModel model;
+    model.parse(samplePath("nac6.inp").string());
+
+    REQUIRE(model.materials.size() == 2);
+    CHECK(model.materials[0].name == "air");
+    CHECK(model.materials[0].temperatureRatio == 1.0);
+    CHECK(model.materials[0].pressureRatio == 1.0);
+    CHECK(model.materials[1].name == "exhaust");
+    CHECK(model.materials[1].temperatureRatio == 1.0);
+    CHECK(model.materials[1].pressureRatio == 1.3);
+
+    REQUIRE(model.surfaceMaterials.size() == 3);
+    CHECK(model.materialIndex("cowll", 1) == 1);
+    CHECK(model.materialIndex("cowll", -1) == 0);
+    CHECK(model.materialIndex("plume", -1) == 1);
+    CHECK(model.materialIndex("plume", 1) == 0);
+    CHECK(model.materialIndex("base", 1) == 1);
+    CHECK(model.materialIndex("inlet", 1) == 0);
+    CHECK(model.materialIndex("unknown", 1) == 0);
+
+    const auto flow =
+        a502::Compressibility::fromAngles(0.6, 0.0, 0.0);
+    const auto air = a502::materialRatios(model.materials[0], flow);
+    CHECK(air.velocity == Catch::Approx(1.0).epsilon(1e-14));
+    CHECK(air.temperature == 1.0);
+    CHECK(air.pressure == 1.0);
+    CHECK(air.cpFactor == Catch::Approx(1.0).epsilon(1e-14));
+
+    // Reference values from samples/nac6.out (material index 1).
+    const auto exhaust =
+        a502::materialRatios(model.materials[1], flow);
+    CHECK(exhaust.temperature == 1.0);
+    CHECK(exhaust.pressure == 1.3);
+    CHECK(exhaust.velocity == Catch::Approx(1.41530).epsilon(1e-5));
+    CHECK(exhaust.cpFactor == Catch::Approx(2.15899).epsilon(1e-5));
+
+    // Below M = 0.01 matvfs and matprp use air properties.
+    const auto lowFlow =
+        a502::Compressibility::fromAngles(0.005, 0.0, 0.0);
+    const auto low = a502::materialRatios(model.materials[1], lowFlow);
+    CHECK(low.velocity == 1.0);
+    CHECK(low.cpFactor == 1.0);
+
+    // Decks without a $material section keep only air.
+    a502::AeroModel plain;
+    plain.parse(samplePath("swb.inp").string());
+    CHECK(plain.materials.size() == 1);
+    CHECK(plain.surfaceMaterials.empty());
+}
+
 TEST_CASE("panel geometry: unit square", "[geometry]") {
     // Column-major grid:
     //   (m=0,n=0)=(0,0,0)  (m=1,n=0)=(1,0,0)

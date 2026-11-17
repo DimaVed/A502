@@ -111,6 +111,15 @@ std::string baseName(const std::string& s) {
     return p == std::string::npos ? s : s.substr(0, p);
 }
 
+// Lower-case copy used for A502's case-insensitive name comparisons.
+std::string lowerCopy(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (unsigned char c : s)
+        out.push_back(static_cast<char>(std::tolower(c)));
+    return out;
+}
+
 // Returns the first numeric Value of an Entry, or nullptr.
 const Value* firstNumber(const Entry& e) {
     for (const auto& v : e.values)
@@ -163,6 +172,8 @@ void AeroModel::clear() {
     offBodyPoints.clear();
     sections.clear();
     networks.clear();
+    materials.assign(1, MaterialProperties{});
+    surfaceMaterials.clear();
     flow = Compressibility{};
     panels.clear();
     controlPoints.clear();
@@ -300,6 +311,7 @@ void AeroModel::parse(const std::string& inpPath) {
 
     extractParameters();
     extractNetworks();
+    extractMaterials();
     BLOG(info) << "Parsed " << sections.size() << " sections, "
                << networks.size() << " networks"
                << " (mach=" << amach << ", nacase=" << nacase << ")";
@@ -372,6 +384,20 @@ void AeroModel::writeOut(const std::string& outPath) const {
                 << " y[" << ymin << ", " << ymax << "]"
                 << " z[" << zmin << ", " << zmax << "]\n";
         }
+    }
+
+    // ---- materials ----
+    out << "\n::: MATERIALS (" << (materials.size() - 1) << ") :::\n";
+    for (std::size_t i = 0; i < materials.size(); ++i) {
+        out << "  [" << i << "] '" << materials[i].name
+            << "'  tratio=" << materials[i].temperatureRatio
+            << "  pratio=" << materials[i].pressureRatio << "\n";
+    }
+    for (const auto& sm : surfaceMaterials) {
+        out << "  surface material: net '" << sm.network << "' "
+            << (sm.surface > 0 ? "upper" : sm.surface < 0 ? "lower"
+                                                            : "unknown")
+            << " -> material " << sm.material << "\n";
     }
 
     // ---- full section listing ----
@@ -878,6 +904,148 @@ void AeroModel::extractNetworks() {
             ei = cj - 1; // continue after the coordinate cards
         }
     }
+}
+
+void AeroModel::extractMaterials() {
+    materials.assign(1, MaterialProperties{});
+    surfaceMaterials.clear();
+
+    const Section* section = findSection("material");
+    if (section == nullptr)
+        return;
+
+    // A "=name" declaration owns the ordinary data cards that follow it
+    // until the next "=..." group.  The parser keeps those cards as separate
+    // FreeData entries, so collect them here.
+    auto groupValues = [&](std::size_t index) {
+        std::vector<Value> values = section->entries[index].values;
+        for (std::size_t j = index + 1;
+             j < section->entries.size() &&
+             section->entries[j].kind == EntryKind::FreeData;
+             ++j) {
+            values.insert(values.end(),
+                          section->entries[j].values.begin(),
+                          section->entries[j].values.end());
+        }
+        return values;
+    };
+
+    int materialCount = 0;
+    for (std::size_t i = 0; i < section->entries.size(); ++i) {
+        const Entry& e = section->entries[i];
+        if (e.kind != EntryKind::Variable || e.names.empty())
+            continue;
+        if (e.names.front() != "nmat")
+            continue;
+        const std::vector<Value> values = groupValues(i);
+        for (const Value& v : values) {
+            if (v.numeric) {
+                materialCount =
+                    static_cast<int>(std::lround(v.number));
+                break;
+            }
+        }
+        break;
+    }
+    materialCount = std::min(std::max(materialCount, 0), 10);
+
+    // Material definitions: "tratio pratio name" per material.
+    for (std::size_t i = 0; i < section->entries.size(); ++i) {
+        const Entry& e = section->entries[i];
+        if (e.kind != EntryKind::Variable || e.names.empty())
+            continue;
+        if (e.names.front().find("tratio") == std::string::npos)
+            continue;
+        const std::vector<Value> values = groupValues(i);
+        for (std::size_t k = 0; k + 2 < values.size(); ++k) {
+            if (materialCount > 0 &&
+                static_cast<int>(materials.size()) - 1 >= materialCount)
+                break;
+            if (!values[k].numeric || !values[k + 1].numeric ||
+                values[k + 2].numeric)
+                continue;
+            MaterialProperties material;
+            material.temperatureRatio = values[k].number;
+            material.pressureRatio = values[k + 1].number;
+            material.name = values[k + 2].text;
+            if (material.temperatureRatio == 0.0)
+                material.temperatureRatio = 1.0;
+            if (material.pressureRatio == 0.0)
+                material.pressureRatio = 1.0;
+            materials.push_back(std::move(material));
+            k += 2;
+        }
+    }
+
+    // Same clamps as matprp: air properties at very low Mach, and pressure
+    // ratios not below the critical value.
+    constexpr double gamma = 1.4;
+    if (amach < 0.01) {
+        for (std::size_t i = 1; i < materials.size(); ++i) {
+            materials[i].temperatureRatio = 1.0;
+            materials[i].pressureRatio = 1.0;
+        }
+    } else {
+        const double tpexp = gamma / (1.0 - gamma);
+        double tpcrit =
+            std::pow(1.0 + 0.5 * (gamma - 1.0) * amach * amach, tpexp) +
+            1.0e-12;
+        tpcrit = std::min(tpcrit, 1.0);
+        for (std::size_t i = 1; i < materials.size(); ++i)
+            if (materials[i].pressureRatio < tpcrit)
+                materials[i].pressureRatio = tpcrit;
+    }
+
+    // Network/surface -> material assignments.
+    for (std::size_t ei = 0; ei < section->entries.size(); ++ei) {
+        const Entry& e = section->entries[ei];
+        if (e.kind != EntryKind::Variable || e.names.empty())
+            continue;
+        if (e.names.front() != "netname")
+            continue;
+        const std::vector<Value> values = groupValues(ei);
+        for (std::size_t i = 0; i + 2 < values.size(); i += 3) {
+            SurfaceMaterial assignment;
+            assignment.network = values[i].text;
+            const std::string surface = lowerCopy(values[i + 1].text);
+            if (surface.find("upp") != std::string::npos)
+                assignment.surface = 1;
+            else if (surface.find("low") != std::string::npos)
+                assignment.surface = -1;
+            else
+                continue;
+
+            int material = 0;
+            if (values[i + 2].numeric) {
+                material = static_cast<int>(
+                    std::lround(values[i + 2].number));
+            } else {
+                const std::string wanted = lowerCopy(values[i + 2].text);
+                for (std::size_t k = 0; k < materials.size(); ++k)
+                    if (lowerCopy(materials[k].name) == wanted) {
+                        material = static_cast<int>(k);
+                        break;
+                    }
+            }
+            if (material < 0 ||
+                material >= static_cast<int>(materials.size()))
+                material = 0;
+            assignment.material = material;
+            surfaceMaterials.push_back(std::move(assignment));
+        }
+    }
+}
+
+int AeroModel::materialIndex(const std::string& netname, int surface) const {
+    const std::string wanted = lowerCopy(netname);
+    int material = 0;
+    for (const SurfaceMaterial& assignment : surfaceMaterials) {
+        if (assignment.surface != surface)
+            continue;
+        if (lowerCopy(assignment.network) == wanted)
+            material = assignment.material; // later entries override
+    }
+    return material;
 }
 
 bool AeroModel::isSolved() const {

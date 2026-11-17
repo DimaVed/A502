@@ -88,6 +88,22 @@ struct ReferenceData {
     double sref{0.0}, bref{0.0}, cref{0.0}, dref{0.0};
 };
 
+// One entry of the $material section.  Material 0 is always air
+// (temperature and pressure ratios equal to one).
+struct MaterialProperties {
+    std::string name{"air"};
+    double temperatureRatio{1.0}; // tratio
+    double pressureRatio{1.0};    // pratio
+};
+
+// Assignment of a material to one surface of a network.  surface is +1 for
+// the upper and -1 for the lower side, matching A502 matnet(1:2,knet).
+struct SurfaceMaterial {
+    std::string network;
+    int surface{0};
+    int material{0};
+};
+
 // One panel produced by solve(): the nine-point/subpanel geometry plus the
 // owning network index and a placeholder Cp for visualization.
 struct Panel {
@@ -142,6 +158,8 @@ public:
     // ----- generic, complete model ----------------------------------------
     std::vector<Section>  sections;   // every input section, in file order
     std::vector<Network>  networks;   // networks reconstructed from $points
+    std::vector<MaterialProperties> materials; // [0] = air
+    std::vector<SurfaceMaterial>    surfaceMaterials;
 
     // ----- prototype solution ---------------------------------------------
     // solve() panelizes every $points network into a flat list of Panels in
@@ -161,9 +179,14 @@ public:
     // (sub-string, case-insensitive).  Returns nullptr when not found.
     const Section* findSection(const std::string& kwFragment) const;
 
+    // Material index assigned to a network surface (+1 upper, -1 lower).
+    // Returns 0 (air) when there is no assignment.
+    int materialIndex(const std::string& netname, int surface) const;
+
 private:
     void extractParameters();
     void extractNetworks();
+    void extractMaterials();
     void writeHeader(std::ostream& out) const;
     bool solved_{false};
 };

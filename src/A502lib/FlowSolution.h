@@ -38,6 +38,13 @@ struct CpMaterialRatios {
     double cpFactor{1.0};    // cpfmat = vfmat*wfmat
 };
 
+struct MaterialProperties; // defined in AeroModel.h
+
+// Port of matvfs(): material ratios for the current freestream.  Below
+// Mach 0.01 the ratios of air are returned regardless of the material.
+CpMaterialRatios materialRatios(const MaterialProperties& material,
+                                const Compressibility& flow);
+
 // cpcal(): perturbationVelocity is the perturbation velocity (total minus
 // freestream), freestream is the freestream velocity vector, mach is the
 // freestream Mach number.
