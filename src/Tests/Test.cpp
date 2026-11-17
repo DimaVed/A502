@@ -584,6 +584,37 @@ TEST_CASE("subsonic near-field influence: triangular subpanel",
           Catch::Approx(doubletPotential).epsilon(1e-8));
 }
 
+TEST_CASE("subsonic near-field influence: panel-centre self term",
+          "[nearfield]") {
+    a502::Network net;
+    net.netname = "square";
+    net.nm = 2;
+    net.nn = 2;
+    net.coordinates = {0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                       0.0, 1.0, 0.0, 1.0, 1.0, 0.0};
+    const auto flow = a502::Compressibility::fromAngles(0.0, 0.0, 0.0);
+    auto panel = a502::buildPanelGeometry(net.coordinates, 2, 2, 0, 0);
+    REQUIRE_FALSE(panel.degenerate);
+    a502::applyCompressibleFrames(panel, flow);
+
+    const auto infl = a502::subsonicPanelNearFieldInfluence(
+        panel, flow, panel.cp[8], 6);
+    REQUIRE(infl.valid);
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 5; ++c)
+            CHECK(std::isfinite(infl.source(r, c)));
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 9; ++c)
+            CHECK(std::isfinite(infl.doublet(r, c)));
+
+    // subsbi uses sign(h) for the solid-angle term.  At h = 0 the raw
+    // kernel therefore returns a zero constant-doublet potential; it does
+    // not include the surface jump.
+    const double jump =
+        infl.doublet.row(0).dot(a502::PanelDoubletValues::Ones());
+    CHECK(jump == Catch::Approx(0.0).margin(1e-12));
+}
+
 TEST_CASE("subsonic near-field influence: whole panel", "[nearfield]") {
     a502::Network net;
     net.netname = "square";
