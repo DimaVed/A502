@@ -798,6 +798,8 @@ void AeroModel::extractNetworks() {
             extractPointsSection(sec);
         else if (sec.keywordNorm == "circular" || sec.keywordNorm == "cir")
             extractCircularSection(sec);
+        else if (sec.keywordNorm == "trailing" || sec.keywordNorm == "tra")
+            extractTrailingSection(sec);
     }
 }
 
@@ -1074,6 +1076,179 @@ void AeroModel::extractCircularSection(const Section& sec) {
         }
     }
     finishBlock();
+}
+
+void AeroModel::extractTrailingSection(const Section& sec) {
+    // Port of trwake(): generate a two-row wake network attached to one
+    // side of an existing network.  The "=inat insd xwake twake netname"
+    // group provides one row per generated network.
+    int sectionKn = 0;
+    int sectionKt = 0;
+    double sectionCpnorm = 2.0;
+    bool pendingKn = false;
+    bool pendingKt = false;
+    std::vector<Value> trailingRows;
+
+    auto groupValues = [&](std::size_t index) {
+        std::vector<Value> values = sec.entries[index].values;
+        for (std::size_t j = index + 1;
+             j < sec.entries.size() &&
+             sec.entries[j].kind == EntryKind::FreeData;
+             ++j) {
+            values.insert(values.end(),
+                          sec.entries[j].values.begin(),
+                          sec.entries[j].values.end());
+        }
+        return values;
+    };
+    auto numbers = [](const std::vector<Value>& values) {
+        std::vector<double> out;
+        for (const Value& v : values)
+            if (v.numeric)
+                out.push_back(v.number);
+        return out;
+    };
+
+    for (std::size_t ei = 0; ei < sec.entries.size(); ++ei) {
+        const Entry& e = sec.entries[ei];
+        if (e.kind == EntryKind::Variable && !e.names.empty()) {
+            const std::string& first = e.names.front();
+            if (first == "kn")
+                pendingKn = true;
+            else if (first == "kt")
+                pendingKt = true;
+            else if (first == "inat")
+                trailingRows = groupValues(ei);
+            continue;
+        }
+        if (e.kind != EntryKind::FreeData)
+            continue;
+        if (pendingKn) {
+            const std::vector<double> values = numbers(e.values);
+            if (!values.empty()) {
+                sectionKn = static_cast<int>(
+                    std::lround(values.front()));
+                if (values.size() >= 2)
+                    sectionCpnorm = values.back();
+            }
+            pendingKn = false;
+        } else if (pendingKt) {
+            const std::vector<double> values = numbers(e.values);
+            if (!values.empty())
+                sectionKt = static_cast<int>(
+                    std::lround(values.front()));
+            pendingKt = false;
+        }
+    }
+
+    if (trailingRows.empty())
+        return;
+
+    constexpr double pi = 3.14159265358979323846;
+    const double aarg = alpc * pi / 180.0;
+    const double barg = -betc * pi / 180.0;
+    const Eigen::Vector3d freestream(
+        std::cos(aarg) * std::cos(barg),
+        std::cos(aarg) * std::sin(barg), std::sin(aarg));
+
+    for (std::size_t i = 0; i + 4 < trailingRows.size(); i += 5) {
+        const Value& attachValue = trailingRows[i];
+        const Value& sideValue = trailingRows[i + 1];
+        const Value& xwakeValue = trailingRows[i + 2];
+        const Value& twakeValue = trailingRows[i + 3];
+        const Value& nameValue = trailingRows[i + 4];
+        if (attachValue.numeric || !sideValue.numeric ||
+            !xwakeValue.numeric || !twakeValue.numeric ||
+            nameValue.numeric) {
+            BLOG(warning) << "$trailing: malformed =inat row";
+            break;
+        }
+
+        const std::string attachName = lowerCopy(attachValue.text);
+        int attached = -1;
+        for (std::size_t k = 0; k < networks.size(); ++k)
+            if (lowerCopy(networks[k].netname) == attachName) {
+                attached = static_cast<int>(k);
+                break;
+            }
+        if (attached < 0) {
+            BLOG(warning) << "$trailing: network '" << attachValue.text
+                          << "' not found";
+            continue;
+        }
+
+        const Network& parent =
+            networks[static_cast<std::size_t>(attached)];
+        const int nrow = parent.nm;
+        const int ncol = parent.nn;
+        const int insd = static_cast<int>(std::lround(sideValue.number));
+        int nte = 0;
+        int sideIndex = 0;
+        bool sideIsRow = false;
+        if (insd == 1 || insd == 3) {
+            nte = ncol;
+            sideIndex = (insd == 1) ? 0 : nrow - 1;
+            sideIsRow = true;
+        } else if (insd == 2 || insd == 4) {
+            nte = nrow;
+            sideIndex = (insd == 2) ? ncol - 1 : 0;
+            sideIsRow = false;
+        } else {
+            BLOG(warning) << "$trailing: invalid insd=" << insd;
+            continue;
+        }
+        if (nte <= 0)
+            continue;
+
+        const Eigen::Vector3d gen =
+            (twakeValue.number == 1.0)
+                ? freestream
+                : Eigen::Vector3d(1.0, 0.0, 0.0);
+        if (!(std::abs(gen.x()) > 1.0e-14)) {
+            BLOG(warning) << "$trailing: zero streamwise generator";
+            continue;
+        }
+
+        Network wake;
+        wake.netname = nameValue.text;
+        wake.nm = 2;
+        wake.nn = nte;
+        wake.kn = sectionKn;
+        wake.kt = sectionKt;
+        wake.cpnorm = sectionCpnorm;
+        wake.coordinates.reserve(
+            static_cast<std::size_t>(6) * static_cast<std::size_t>(nte));
+
+        bool complete = true;
+        for (int j = 0; j < nte; ++j) {
+            const int pIndex = sideIsRow
+                                   ? j * nrow + sideIndex
+                                   : sideIndex * nrow + j;
+            const std::size_t base =
+                static_cast<std::size_t>(3 * pIndex);
+            if (base + 2 >= parent.coordinates.size()) {
+                complete = false;
+                break;
+            }
+            const Eigen::Vector3d p(parent.coordinates[base],
+                                    parent.coordinates[base + 1],
+                                    parent.coordinates[base + 2]);
+            const double alf = (xwakeValue.number - p.x()) / gen.x();
+            const Eigen::Vector3d q = p + alf * gen;
+            wake.coordinates.push_back(p.x());
+            wake.coordinates.push_back(p.y());
+            wake.coordinates.push_back(p.z());
+            wake.coordinates.push_back(q.x());
+            wake.coordinates.push_back(q.y());
+            wake.coordinates.push_back(q.z());
+        }
+        if (!complete) {
+            BLOG(warning) << "$trailing: network '" << parent.netname
+                          << "' has too few coordinates";
+            continue;
+        }
+        networks.push_back(std::move(wake));
+    }
 }
 
 void AeroModel::extractMaterials() {

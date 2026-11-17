@@ -66,14 +66,33 @@ void checkNetworks(const fs::path& deck,
 
 } // namespace
 
-TEST_CASE("$points: swb.inp", "[parser][points]") {
+TEST_CASE("$points and $trailing: swb.inp", "[parser][points]") {
     checkNetworks(samplePath("swb.inp"),
                   {{"winga", 1, 11, 3},
                    {"wingta", 1, 6, 2},
                    {"bodyl", 1, 11, 3},
                    {"bodyu", 1, 11, 3},
                    {"bodyb", 5, 5, 2},
-                   {"awbw", 20, 4, 2}});
+                   {"awbw", 20, 4, 2},
+                   {"wingwk", 18, 2, 3},
+                   {"bodylwk", 18, 2, 3},
+                   {"bodyuwk", 18, 2, 3}});
+
+    a502::AeroModel model;
+    model.parse(samplePath("swb.inp").string());
+    const auto& wingwk = model.networks[6];
+    CHECK(wingwk.coordinates.size() == 18);
+    // First wake column: trailing-edge point and the same point at x=100.
+    CHECK(wingwk.coordinates[0] == Catch::Approx(69.4737).epsilon(1e-4));
+    CHECK(wingwk.coordinates[1] == Catch::Approx(9.2105).epsilon(1e-4));
+    CHECK(std::abs(wingwk.coordinates[2]) < 1e-10);
+    CHECK(wingwk.coordinates[3] == Catch::Approx(100.0).epsilon(1e-12));
+    CHECK(wingwk.coordinates[4] == Catch::Approx(9.2105).epsilon(1e-4));
+    CHECK(std::abs(wingwk.coordinates[5]) < 1e-10);
+    // Third wake column starts at winga's second span station.
+    CHECK(wingwk.coordinates[6] == Catch::Approx(76.6660).epsilon(1e-4));
+    CHECK(wingwk.coordinates[7] == Catch::Approx(20.0).epsilon(1e-4));
+    CHECK(wingwk.coordinates[9] == Catch::Approx(100.0).epsilon(1e-12));
 }
 
 TEST_CASE("$points: ellip.inp (legacy card layout)", "[parser][points]") {
@@ -344,7 +363,7 @@ TEST_CASE("panel geometry: sample decks", "[geometry]") {
         a502::AeroModel model;
         model.parse(samplePath("swb.inp").string());
         REQUIRE(model.solve());
-        CHECK(model.totalPanels == 72);
+        CHECK(model.totalPanels == 78);
 
         const auto& first = model.panels.front();
         CHECK(first.network == 0);
