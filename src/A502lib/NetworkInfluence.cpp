@@ -173,7 +173,7 @@ NetworkInfluence evaluateNetworkNearFieldInfluence(
             applyCompressibleFrames(panel, flow);
 
             const PanelNearFieldInfluence pic =
-                subsonicPanelNearFieldInfluence(panel, flow, fieldPoint, 6);
+                panelNearFieldInfluence(panel, flow, fieldPoint, 6);
             if (!pic.valid)
                 return NetworkInfluence{};
 

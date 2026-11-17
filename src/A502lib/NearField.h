@@ -42,6 +42,14 @@ SubsonicSubpanelInfluence subsonicSubpanelInfluence(
     const std::array<Eigen::Vector3d, 4>& vertices, int ns, int ics, int its,
     const Eigen::Vector3d& fieldPoint, double aj, int nf = 6);
 
+// Supersonic near-field subpanel influence (supsbi in panair.f90) for
+// subinclined subpanels.  Same local-frame conventions and output layout as
+// the subsonic kernel.
+using SupersonicSubpanelInfluence = SubsonicSubpanelInfluence;
+SupersonicSubpanelInfluence supersonicSubpanelInfluence(
+    const std::array<Eigen::Vector3d, 4>& vertices, int ns, int ics, int its,
+    const Eigen::Vector3d& fieldPoint, double aj, int nf = 6);
+
 // Near-field influence of one panel on a field point, summed over its eight
 // triangular subpanels.  Rows are potential and global x,y,z velocity; source
 // columns are sigma1..sigma4,sigma9 and doublet columns are mu1..mu9.
@@ -55,6 +63,13 @@ struct PanelNearFieldInfluence {
 // The panel must already have compressibility-scaled subpanel frames
 // (applyCompressibleFrames), as built by AeroModel::solve().
 PanelNearFieldInfluence subsonicPanelNearFieldInfluence(
+    const PanelGeometry& panel, const Compressibility& flow,
+    const Eigen::Vector3d& fieldPoint, int nf = 6);
+
+// nftpic() kernel dispatch: subsonic flows use subsbi(), supersonic flows
+// use supsbi() for subinclined subpanels.  Supersonic superinclined
+// subpanels need supspi(), which is not ported yet, so they return invalid.
+PanelNearFieldInfluence panelNearFieldInfluence(
     const PanelGeometry& panel, const Compressibility& flow,
     const Eigen::Vector3d& fieldPoint, int nf = 6);
 

@@ -3786,3 +3786,118 @@ TEST_CASE("global system: closed doublet box needs a gauge",
         CHECK(std::abs(flowA.cp[k] - flowB.cp[k]) < 1e-8);
     }
 }
+
+TEST_CASE("supersonic near-field: source kernel", "[nearfield]") {
+    std::array<Eigen::Vector3d, 4> v;
+    v[0] = Eigen::Vector3d(0, 0, 0);
+    v[1] = Eigen::Vector3d(1, 0, 0);
+    v[2] = Eigen::Vector3d(0, 1, 0);
+    v[3] = v[0];
+    const Eigen::Vector3d fieldPoint(10.0, 0.0, 1.0);
+    const auto up = a502::supersonicSubpanelInfluence(
+        v, 4, 4, 3, fieldPoint, 1.0, 6);
+    REQUIRE(up.valid);
+    const double constantSource = up.source(0, 0);
+
+    // The fully-inside-Mach-cone constant source potential must equal
+    //   -1/(2*pi) * integral_S 1/sqrt((xp-xi)^2-(yp-eta)^2-h^2) dA.
+    static const double gp[16] = {
+        -0.9894009349916499, -0.9445750230732326, -0.8656312023878318,
+        -0.7554044083550030, -0.6178762444026438, -0.4580167776572274,
+        -0.2816035507792589, -0.0950125098376374,  0.0950125098376374,
+         0.2816035507792589,  0.4580167776572274,  0.6178762444026438,
+         0.7554044083550030,  0.8656312023878318,  0.9445750230732326,
+         0.9894009349916499};
+    static const double gw[16] = {
+        0.0271524594117541, 0.0622535239386479, 0.0951585116824928,
+        0.1246289712555339, 0.1495959888165767, 0.1691565193950025,
+        0.1826034150449236, 0.1894506104550685, 0.1894506104550685,
+        0.1826034150449236, 0.1691565193950025, 0.1495959888165767,
+        0.1246289712555339, 0.0951585116824928, 0.0622535239386479,
+        0.0271524594117541};
+    double integral = 0.0;
+    for (int a = 0; a < 16; ++a) {
+        const double r = 0.5 * (gp[a] + 1.0);
+        const double wr = 0.5 * gw[a];
+        for (int b = 0; b < 16; ++b) {
+            const double s = 0.5 * (gp[b] + 1.0);
+            const double ws = 0.5 * gw[b];
+            const double xi = r;
+            const double eta = s * (1.0 - r);
+            const double dx = fieldPoint.x() - xi;
+            const double kernel =
+                1.0 / std::sqrt(dx * dx - eta * eta -
+                                fieldPoint.z() * fieldPoint.z());
+            integral += wr * ws * (1.0 - r) * kernel;
+        }
+    }
+    const double pi = 3.14159265358979323846;
+    CHECK(constantSource ==
+          Catch::Approx(-integral / (2.0 * pi)).epsilon(1e-10));
+
+    // Source potential is symmetric in h, zero outside the domain of
+    // dependence, and independent of the doublet terms.
+    const auto down = a502::supersonicSubpanelInfluence(
+        v, 4, 4, 3, Eigen::Vector3d(10, 0, -1), 1.0, 6);
+    REQUIRE(down.valid);
+    CHECK(down.source(0, 0) ==
+          Catch::Approx(constantSource).epsilon(1e-12));
+
+    const auto downstream = a502::supersonicSubpanelInfluence(
+        v, 4, 4, 3, Eigen::Vector3d(0, 0, 1), 1.0, 6);
+    REQUIRE(downstream.valid);
+    CHECK(downstream.source(0, 0) == 0.0);
+
+    const auto sourceOnly = a502::supersonicSubpanelInfluence(
+        v, 4, 4, 1, fieldPoint, 1.0, 6);
+    REQUIRE(sourceOnly.valid);
+    CHECK((sourceOnly.source - up.source).norm() < 1e-12);
+
+    // A partially cut domain of dependence is still finite.
+    const auto partial = a502::supersonicSubpanelInfluence(
+        v, 4, 4, 3, Eigen::Vector3d(0.5, 0.2, 0.1), 1.0, 6);
+    REQUIRE(partial.valid);
+    CHECK(partial.source.allFinite());
+    CHECK(partial.doublet.allFinite());
+    CHECK(partial.source(0, 0) != 0.0);
+
+    const auto cubic = a502::supersonicSubpanelInfluence(
+        v, 4, 4, 3, fieldPoint, 1.0, 10);
+    REQUIRE(cubic.valid);
+    CHECK(cubic.source.allFinite());
+    CHECK(cubic.doublet.allFinite());
+}
+
+TEST_CASE("supersonic near-field: kernel dispatch", "[nearfield]") {
+    const auto flow =
+        a502::Compressibility::fromAngles(1.2, 0.0, 0.0);
+
+    // Panel in the x-y plane: subinclined at M > 1.
+    const std::vector<double> flat = {
+        0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 1.0, 1.0, 0.0};
+    a502::PanelGeometry panel =
+        a502::buildPanelGeometry(flat, 2, 2, 0, 0);
+    REQUIRE_FALSE(panel.degenerate);
+    a502::applyCompressibleFrames(panel, flow);
+    REQUIRE(panel.subpanels[0].inclination == 1);
+    const auto influence = a502::panelNearFieldInfluence(
+        panel, flow, Eigen::Vector3d(0.5, 0.5, 0.5));
+    REQUIRE(influence.valid);
+    CHECK(influence.source.allFinite());
+    CHECK(influence.doublet.allFinite());
+
+    // Panel in the y-z plane (normal along the flow): superinclined, which
+    // needs the not-yet-ported supspi() and must be rejected.
+    const std::vector<double> cross = {
+        0.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 1.0, 0.0, 1.0, 1.0};
+    a502::PanelGeometry super =
+        a502::buildPanelGeometry(cross, 2, 2, 0, 0);
+    REQUIRE_FALSE(super.degenerate);
+    a502::applyCompressibleFrames(super, flow);
+    REQUIRE(super.subpanels[0].inclination == -1);
+    CHECK_FALSE(a502::panelNearFieldInfluence(
+                    super, flow, Eigen::Vector3d(0.5, 0.5, 0.5))
+                    .valid);
+}

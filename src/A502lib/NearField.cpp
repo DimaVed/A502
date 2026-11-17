@@ -282,9 +282,333 @@ SubsonicSubpanelInfluence subsonicSubpanelInfluence(
     return out;
 }
 
-PanelNearFieldInfluence subsonicPanelNearFieldInfluence(
+SupersonicSubpanelInfluence supersonicSubpanelInfluence(
+    const std::array<Eigen::Vector3d, 4>& vertices, int ns, int ics, int its,
+    const Eigen::Vector3d& fieldPoint, double aj, int nf) {
+    SupersonicSubpanelInfluence out;
+    if (ns < 3 || ns > 4 || (nf != 6 && nf != 10) || its < 1 || its > 3)
+        return out;
+
+    // supsbi(): edge-integral form of the linear supersonic kernel.
+    constexpr double pi = 3.14159265358979323846;
+    constexpr double dltmch = 1.0e2;
+    constexpr double deltbt = 1.0e-2;
+    const double h = fieldPoint.z();
+    const double hh = h * h;
+
+    std::array<double, 13> b{};
+    for (int edge = 1; edge <= ns; ++edge) {
+        if (edge == ics)
+            continue;
+        int next = (edge % ns) + 1;
+        if (next == ics)
+            next = (next % ns) + 1;
+
+        const Eigen::Vector3d& p1 =
+            vertices[static_cast<std::size_t>(edge - 1)];
+        const Eigen::Vector3d& p2 =
+            vertices[static_cast<std::size_t>(next - 1)];
+        const double aks1 = p1.x() - fieldPoint.x();
+        const double aet1 = p1.y() - fieldPoint.y();
+        const double aks2 = p2.x() - fieldPoint.x();
+        const double aet2 = p2.y() - fieldPoint.y();
+
+        const double dks = aks2 - aks1;
+        const double det = aet2 - aet1;
+        const double drm = std::sqrt(dks * dks + det * det);
+        if (!(drm > 0.0))
+            continue;
+        const double drmi = 1.0 / drm;
+        const double ank = drmi * det;
+        const double ane = -drmi * dks;
+        const double a = aks1 * ank + aet1 * ane;
+        const double aa = a * a;
+        const double bet = (ank - ane) * (ank + ane);
+        const double gg = aa - bet * hh;
+        const double sbet = std::sqrt(std::abs(bet));
+        double el1 = aks1 * ane + aet1 * ank;
+        double el2 = aks2 * ane + aet2 * ank;
+
+        double hh113 = 0.0;
+        const double rr1 = aks1 * aks1 - aet1 * aet1 - hh;
+        const double rr2 = aks2 * aks2 - aet2 * aet2 - hh;
+        double r1 = 0.0;
+        double r2 = 0.0;
+        if (rr1 > 0.0 && aks1 < 0.0)
+            r1 = std::sqrt(rr1);
+        if (rr2 > 0.0 && aks2 < 0.0)
+            r2 = std::sqrt(rr2);
+
+        double f111 = 0.0;
+        double f121 = 0.0;
+        double f211 = 0.0;
+        double f221 = 0.0;
+
+        if (!(r1 > 0.0 || r2 > 0.0)) {
+            if (bet <= 0.0 || el1 * el2 >= 0.0 || gg <= 0.0 ||
+                a * ank >= 0.0)
+                continue;
+            if (h != 0.0)
+                hh113 = (h * ank >= 0.0) ? pi : -pi;
+            f111 = pi / sbet;
+            f121 = -a * ane * f111 / bet;
+            f211 = a * ank * f111 / bet;
+            f221 = -ank * ane * f111 * (gg + 2.0 * aa) /
+                   (2.0 * bet * bet);
+        } else {
+            const double ggb = std::abs(gg);
+            const double g = std::sqrt(ggb);
+            if (r1 == 0.0)
+                el1 = -g;
+            if (r2 == 0.0)
+                el2 = g;
+            double fact1 = 0.0;
+            double fact2 = 0.0;
+            if (bet > 0.0) {
+                fact1 = (el1 * r2 - el2 * r1) / ggb;
+                fact2 = (bet * r1 * r2 + el1 * el2) / ggb;
+            } else {
+                fact1 = (r2 - r1) * (r2 + r1) /
+                        (el1 * r2 + el2 * r1);
+                fact2 = (ggb - el1 * el1 - el2 * el2) /
+                        (bet * r1 * r2 - el1 * el2);
+            }
+            if (h != 0.0)
+                hh113 = std::atan2(h * a * fact1,
+                                   r1 * r2 + hh * fact2);
+
+            if (std::abs(fact2) < dltmch * std::abs(sbet * fact1)) {
+                if (bet < 0.0)
+                    f111 = -((ane >= 0.0) ? 1.0 : -1.0) *
+                           std::log((sbet * r1 + std::abs(el1)) /
+                                    (sbet * r2 + std::abs(el2))) /
+                           sbet;
+                else
+                    f111 = -std::atan2(sbet * fact1, fact2) / sbet;
+                f121 = -(ank * (r2 - r1) + a * ane * f111) / bet;
+                f211 = ank * (a * f111 - 2.0 * ane * f121) -
+                       ane * (r2 - r1);
+                f221 = (3.0 * a * (ank * f121 - ane * f211) +
+                        ane * (r2 * aet2 - r1 * aet1) -
+                        ank * (r2 * aks2 - r1 * aks1) +
+                        2.0 * hh * ank * ane * f111) /
+                       (4.0 * bet);
+            } else {
+                const double sig = fact1 / fact2;
+                const double sigs = sig * sig;
+                const double seris =
+                    sig * sigs *
+                    (1.0 / 3.0 - bet * sigs / 5.0 +
+                     (bet * sigs) * (bet * sigs) / 7.0);
+                f111 = -sig + bet * seris;
+                f121 = (el2 * r1 * aet1 - el1 * r2 * aet2 -
+                        ank * r1 * r2 * (r2 - r1)) /
+                           (ggb * fact2) -
+                       a * ane * seris;
+                f211 = ank * (a * f111 - 2.0 * ane * f121) -
+                       ane * (r2 - r1);
+                const double zet1 = ank * aet1 - ane * aks1;
+                const double zet2 = ank * aet2 - ane * aks2;
+                if (sbet > deltbt) {
+                    f221 = (3.0 * a * (ank * f121 - ane * f211) +
+                            ane * (r2 * aet2 - r1 * aet1) -
+                            ank * (r2 * aks2 - r1 * aks1) +
+                            2.0 * hh * ank * ane * f111) /
+                           (4.0 * bet);
+                } else {
+                    f221 = -0.5 * a * (r2 - r1) +
+                           a * (hh * hh * (r2 - r1) -
+                                2.0 * hh * ank * ane * a *
+                                    (zet2 * r2 - zet1 * r1) +
+                                1.5 * aa * (zet2 * zet2 * r2 -
+                                            zet1 * zet1 * r1)) /
+                               (15.0 * ggb * ggb);
+                }
+            }
+        }
+
+        b[0] += hh113;
+        b[1] += ank * f111;
+        b[2] += ane * f111;
+        b[3] += a * f111;
+        b[4] += ank * f121;
+        b[5] += ane * f121;
+        b[6] += a * f211;
+        b[7] += a * f121;
+        if (nf > 6) {
+            b[8] += ank * f221;
+            b[9] += ane * f221;
+            if (its != 2) {
+                const double fact1 =
+                    (aa + 0.5 * std::abs(gg)) * f111 -
+                    4.0 * ank * ane * f221 -
+                    0.5 * (el2 * r2 - el1 * r1);
+                const double fact2 = a * (ank * f211 - ane * f121);
+                b[10] += a * (ane * ane * fact1 + fact2);
+                b[11] += a * (ank * ank * fact1 - fact2);
+                b[12] += a * f221;
+            }
+        }
+    }
+
+    out.source(0, 0) = -b[3] - h * b[0];
+    out.source(0, 1) = -0.5 * (b[6] - hh * b[1]);
+    out.source(0, 2) = -0.5 * (b[7] + hh * b[2]);
+    if (nf > 6 && its != 2) {
+        out.source(0, 3) = -(hh * (b[5] + h * b[0]) + b[10]) / 3.0;
+        out.source(0, 4) = (hh * b[4] - b[12]) / 3.0;
+        out.source(0, 5) =
+            -(hh * (b[5] - h * b[0] - b[3]) + b[11]) / 3.0;
+    }
+
+    if (its != 1) {
+        out.doublet(0, 0) = -b[0];
+        out.doublet(0, 1) = h * b[1];
+        out.doublet(0, 2) = -h * b[2];
+        out.doublet(0, 3) = -h * (b[5] + h * b[0]);
+        out.doublet(0, 4) = h * b[4];
+        out.doublet(0, 5) = -h * (b[5] + out.source(0, 0));
+        if (nf > 6) {
+            out.doublet(0, 6) = h * (hh * b[1] - b[9]);
+            out.doublet(0, 7) = h * (b[8] + out.source(0, 2));
+            out.doublet(0, 8) = -h * (b[9] + out.source(0, 1));
+            out.doublet(0, 9) = h * (b[8] + hh * b[2]);
+        }
+    }
+
+    out.source(1, 0) = b[1];
+    out.source(1, 1) = -b[5] - h * b[0];
+    out.source(1, 2) = b[4];
+    out.source(2, 0) = b[2];
+    out.source(2, 1) = -b[4];
+    out.source(2, 2) = b[5] + out.source(0, 0);
+    out.source(3, 0) = -b[0];
+    out.source(3, 1) = h * b[1];
+    out.source(3, 2) = -h * b[2];
+    if (nf > 6) {
+        out.source(1, 3) = hh * b[1] - b[9];
+        out.source(1, 4) = b[8] + out.source(0, 2);
+        out.source(1, 5) = -b[9] - out.source(0, 1);
+        out.source(2, 3) = -b[8] - out.source(0, 2);
+        out.source(2, 4) = -out.source(1, 5);
+        out.source(2, 5) = -b[8] - hh * b[2];
+        out.source(3, 3) = h * out.source(1, 1);
+        out.source(3, 4) = h * b[4];
+        out.source(3, 5) = -h * out.source(2, 2);
+    }
+
+    if (its != 1) {
+        out.doublet(1, 0) = 0.0;
+        out.doublet(1, 1) = -b[0];
+        out.doublet(1, 2) = 0.0;
+        out.doublet(1, 3) = 2.0 * out.source(3, 1);
+        out.doublet(1, 4) = out.source(3, 2);
+        out.doublet(1, 5) = 0.0;
+        out.doublet(2, 0) = 0.0;
+        out.doublet(2, 1) = 0.0;
+        out.doublet(2, 2) = -b[0];
+        out.doublet(2, 3) = 0.0;
+        out.doublet(2, 4) = out.source(3, 1);
+        out.doublet(2, 5) = 2.0 * out.source(3, 2);
+        out.doublet(3, 0) = 0.0;
+        out.doublet(3, 1) = b[1];
+        out.doublet(3, 2) = -b[2];
+        out.doublet(3, 3) = 2.0 * out.source(1, 1);
+        out.doublet(3, 4) = 2.0 * b[4];
+        out.doublet(3, 5) = -2.0 * out.source(2, 2);
+        if (nf > 6) {
+            out.doublet(1, 6) = 3.0 * out.source(3, 3);
+            out.doublet(1, 7) = 2.0 * out.source(3, 4);
+            out.doublet(1, 8) = out.source(3, 5);
+            out.doublet(1, 9) = 0.0;
+            out.doublet(2, 6) = 0.0;
+            out.doublet(2, 7) = out.source(3, 3);
+            out.doublet(2, 8) = out.doublet(1, 7);
+            out.doublet(2, 9) = 3.0 * out.source(3, 5);
+            out.doublet(3, 6) = -3.0 * out.source(1, 3);
+            out.doublet(3, 7) = -3.0 * out.source(1, 4);
+            out.doublet(3, 8) = -3.0 * out.source(2, 4);
+            out.doublet(3, 9) = -3.0 * out.source(2, 5);
+        }
+    }
+
+    const double pi4i = 1.0 / (4.0 * pi);
+    const double pi2i = 2.0 * pi4i;
+    const double pi2aj = pi2i * aj;
+    const double pi4aj = pi4i * aj;
+    const double pi12i = pi4i / 3.0;
+    const double x1 = fieldPoint.x();
+    const double y1 = fieldPoint.y();
+    const double x2 = 0.5 * x1;
+    const double y2 = 0.5 * y1;
+    const double x3 = x1 / 3.0;
+    const double y3 = y1 / 3.0;
+
+    for (int i = 0; i < 4; ++i) {
+        if (its != 2) {
+            const int ng = (nf > 6) ? 6 : 3;
+            for (int j = 0; j < ng; ++j)
+                out.source(i, j) *= pi2aj;
+            out.source(i, 1) += x1 * out.source(i, 0);
+            out.source(i, 2) += y1 * out.source(i, 0);
+            if (ng == 6) {
+                const double dux = out.source(i, 1) - x2 * out.source(i, 0);
+                const double duy = out.source(i, 2) - y2 * out.source(i, 0);
+                out.source(i, 3) =
+                    pi4aj * out.source(i, 3) + x1 * dux;
+                out.source(i, 4) =
+                    pi2aj * out.source(i, 4) + x1 * duy + y1 * dux;
+                out.source(i, 5) =
+                    pi4aj * out.source(i, 5) + y1 * duy;
+            }
+        }
+        if (its != 1) {
+            for (int j = 0; j < 6; ++j)
+                out.doublet(i, j) *= pi2i;
+            out.doublet(i, 1) += x1 * out.doublet(i, 0);
+            out.doublet(i, 2) += y1 * out.doublet(i, 0);
+            const double dvx = out.doublet(i, 1) - x2 * out.doublet(i, 0);
+            const double dvy = out.doublet(i, 2) - y2 * out.doublet(i, 0);
+            out.doublet(i, 3) =
+                pi4i * out.doublet(i, 3) + x1 * dvx;
+            out.doublet(i, 4) =
+                pi2i * out.doublet(i, 4) + x1 * dvy + y1 * dvx;
+            out.doublet(i, 5) =
+                pi4i * out.doublet(i, 5) + y1 * dvy;
+            if (nf > 6) {
+                const double dvx3 =
+                    out.doublet(i, 1) - x3 * out.doublet(i, 0);
+                const double dvy3 =
+                    out.doublet(i, 2) - y3 * out.doublet(i, 0);
+                const double dvxx = out.doublet(i, 3) - x2 * dvx3;
+                const double dvxy =
+                    out.doublet(i, 4) - x2 * dvy3 - y2 * dvx3;
+                const double dvyy = out.doublet(i, 5) - y2 * dvy3;
+                out.doublet(i, 6) =
+                    pi12i * out.doublet(i, 6) + x1 * dvxx;
+                out.doublet(i, 7) =
+                    pi4i * out.doublet(i, 7) + x1 * dvxy + y1 * dvxx;
+                out.doublet(i, 8) =
+                    pi4i * out.doublet(i, 8) + x1 * dvyy + y1 * dvxy;
+                out.doublet(i, 9) =
+                    pi12i * out.doublet(i, 9) + y1 * dvyy;
+            }
+        }
+    }
+
+    out.valid = true;
+    return out;
+}
+
+namespace {
+
+using SubpanelKernel = SubsonicSubpanelInfluence (*)(
+    const std::array<Eigen::Vector3d, 4>&, int, int, int,
+    const Eigen::Vector3d&, double, int);
+
+PanelNearFieldInfluence panelNearFieldInfluenceInternal(
     const PanelGeometry& panel, const Compressibility& flow,
-    const Eigen::Vector3d& fieldPoint, int nf) {
+    const Eigen::Vector3d& fieldPoint, int nf, bool selectByMach) {
     PanelNearFieldInfluence out;
     if (panel.degenerate || nf != 6)
         return out;
@@ -314,10 +638,20 @@ PanelNearFieldInfluence subsonicPanelNearFieldInfluence(
         // the fourth edge and close the triangle from vertex 3 to vertex 1.
         vertices[3] = vertices[0];
 
+        // nftpic() dispatch: subsonic flows always use subsbi(); supersonic
+        // flows use supsbi() for subinclined and supspi() for superinclined
+        // subpanels.  supspi() is not ported yet.
+        SubpanelKernel kernel = &subsonicSubpanelInfluence;
+        if (selectByMach && flow.mach > 1.0) {
+            if (sp.inclination > 0)
+                kernel = &supersonicSubpanelInfluence;
+            else
+                return PanelNearFieldInfluence{};
+        }
+
         const Eigen::Vector3d localField = frame * (fieldPoint - origin);
         const SubsonicSubpanelInfluence sub =
-            subsonicSubpanelInfluence(vertices, 4, 4, 3, localField,
-                                      sp.jacobian, nf);
+            kernel(vertices, 4, 4, 3, localField, sp.jacobian, nf);
         if (!sub.valid)
             return PanelNearFieldInfluence{};
 
@@ -360,6 +694,21 @@ PanelNearFieldInfluence subsonicPanelNearFieldInfluence(
 
     out.valid = true;
     return out;
+}
+
+} // namespace
+
+PanelNearFieldInfluence subsonicPanelNearFieldInfluence(
+    const PanelGeometry& panel, const Compressibility& flow,
+    const Eigen::Vector3d& fieldPoint, int nf) {
+    return panelNearFieldInfluenceInternal(panel, flow, fieldPoint, nf,
+                                           false);
+}
+
+PanelNearFieldInfluence panelNearFieldInfluence(
+    const PanelGeometry& panel, const Compressibility& flow,
+    const Eigen::Vector3d& fieldPoint, int nf) {
+    return panelNearFieldInfluenceInternal(panel, flow, fieldPoint, nf, true);
 }
 
 PanelIntermediateInfluence subsonicPanelIntermediateInfluence(
