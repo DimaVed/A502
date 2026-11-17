@@ -10,6 +10,7 @@
 #include "AeroModel.h"
 #include "Compressibility.h"
 #include "BoundaryConditions.h"
+#include "FlowSolution.h"
 #include "GlobalBoundarySystem.h"
 #include "GlobalInfluence.h"
 #include "Influence.h"
@@ -1401,6 +1402,34 @@ TEST_CASE("global boundary system: active columns and matching rows",
     CHECK(values.source.isZero(0.0));
     REQUIRE(values.doublet.size() == 25);
     CHECK((values.doublet - solution.unknowns).norm() < 1e-12);
+
+    a502::GlobalParameterValues zeroValues;
+    zeroValues.source = Eigen::VectorXd::Zero(9);
+    zeroValues.doublet = Eigen::VectorXd::Zero(25);
+    zeroValues.valid = true;
+    const auto uniformFlow = a502::evaluateSurfaceFlow(
+        doubletOnly, flowAlpha, doubletLayout, zeroValues, true);
+    REQUIRE(uniformFlow.valid);
+    REQUIRE(uniformFlow.velocity.size() == 25);
+    REQUIRE(uniformFlow.cp.size() == 25);
+    for (std::size_t k = 0; k < uniformFlow.velocity.size(); ++k) {
+        CHECK((uniformFlow.velocity[k] - flowAlpha.compd).norm() < 1e-12);
+        CHECK(std::abs(uniformFlow.cp[k]) < 1e-12);
+    }
+
+    const auto surfaceFlow = a502::evaluateSurfaceFlow(
+        doubletOnly, flowAlpha, doubletLayout, values, true);
+    REQUIRE(surfaceFlow.valid);
+    REQUIRE(surfaceFlow.velocity.size() == 25);
+    REQUIRE(surfaceFlow.cp.size() == 25);
+    bool nonZeroCp = false;
+    for (std::size_t k = 0; k < surfaceFlow.cp.size(); ++k) {
+        CHECK(surfaceFlow.velocity[k].allFinite());
+        CHECK(std::isfinite(surfaceFlow.cp[k]));
+        if (std::abs(surfaceFlow.cp[k]) > 1e-8)
+            nonZeroCp = true;
+    }
+    CHECK(nonZeroCp);
 
     // Solver sanity check with an exactly solvable system.
     a502::GlobalBoundarySystem exact;
