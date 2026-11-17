@@ -7,22 +7,62 @@
 #include "AeroModel.h"
 #include "ControlPoints.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace a502 {
 
-double linearPressureCoefficient(const Eigen::Vector3d& velocity,
-                                 const Eigen::Vector3d& freestream) {
+double pressureCoefficient(
+    const Eigen::Vector3d& perturbationVelocity,
+    const Eigen::Vector3d& freestream, double mach, CpFormula formula,
+    const CpMaterialRatios& material) {
     const double f2 = freestream.squaredNorm();
     if (f2 <= 1.0e-30)
         return 0.0;
-    return -2.0 * (velocity.dot(freestream) - f2) / f2;
+
+    // pv = perturbationVelocity / |freestream|; pvf is its component
+    // along the freestream, pvs the squared magnitude.
+    const double pvf = freestream.dot(perturbationVelocity) / f2;
+    const double pvs = perturbationVelocity.squaredNorm() / f2;
+
+    switch (formula) {
+    case CpFormula::Linear:
+        return material.cpFactor * (-2.0 * pvf);
+    case CpFormula::SlenderBody:
+        return material.cpFactor *
+               (-2.0 * pvf - pvs + pvf * pvf);
+    case CpFormula::SecondOrder: {
+        const double mach2 = mach * mach;
+        return material.cpFactor *
+               (-2.0 * pvf - pvs + mach2 * pvf * pvf);
+    }
+    case CpFormula::Isentropic: {
+        const double fac =
+            material.velocity * material.velocity / material.temperature;
+        double cp = 1.0 - fac * (1.0 + 2.0 * pvf + pvs);
+        if (mach > 0.0) {
+            const double mach2 = mach * mach;
+            const double base = std::max(0.0, 1.0 + 0.2 * mach2 * cp);
+            cp = (1.4285714285714286 / mach2) *
+                 (material.pressure * std::pow(base, 3.5) - 1.0);
+        }
+        return cp;
+    }
+    }
+    return 0.0;
+}
+
+double linearPressureCoefficient(const Eigen::Vector3d& velocity,
+                                 const Eigen::Vector3d& freestream) {
+    return pressureCoefficient(velocity - freestream, freestream, 0.0,
+                               CpFormula::Linear);
 }
 
 SurfaceFlowResult evaluateSurfaceFlow(
     const std::vector<Network>& networks, const Compressibility& flow,
     const GlobalSingularityLayout& layout,
-    const GlobalParameterValues& values, bool includeEdgeAndCorner) {
+    const GlobalParameterValues& values, bool includeEdgeAndCorner,
+    CpFormula formula, const CpMaterialRatios& material) {
     SurfaceFlowResult out;
     if (!values.valid || networks.empty() ||
         layout.network.size() != networks.size() ||
@@ -59,7 +99,8 @@ SurfaceFlowResult evaluateSurfaceFlow(
                 values.doublet;
         const Eigen::Vector3d velocity = flow.compd + perturbation;
         out.velocity[k] = velocity;
-        out.cp[k] = linearPressureCoefficient(velocity, flow.compd);
+        out.cp[k] = pressureCoefficient(perturbation, flow.compd,
+                                        flow.mach, formula, material);
     }
 
     out.valid = true;

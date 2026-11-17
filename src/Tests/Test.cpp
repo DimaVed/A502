@@ -1585,6 +1585,96 @@ TEST_CASE("boundary condition options follow bcopt",
     CHECK(m0.coefficients.tu.isZero(1e-14));
 }
 
+TEST_CASE("pressure coefficients: cpcal formulas", "[flowsolution]") {
+    const auto flow =
+        a502::Compressibility::fromAngles(0.8, 5.0, -3.0);
+    const Eigen::Vector3d freestream = flow.compd;
+    const Eigen::Vector3d perturbation(0.03, -0.02, 0.01);
+
+    const double f2 = freestream.squaredNorm();
+    const double pvf = freestream.dot(perturbation) / f2;
+    const double pvs = perturbation.squaredNorm() / f2;
+    const double mach2 = flow.mach * flow.mach;
+
+    const double linear = a502::pressureCoefficient(
+        perturbation, freestream, flow.mach, a502::CpFormula::Linear);
+    CHECK(linear == Catch::Approx(-2.0 * pvf).epsilon(1e-14));
+
+    const double slender = a502::pressureCoefficient(
+        perturbation, freestream, flow.mach,
+        a502::CpFormula::SlenderBody);
+    CHECK(slender ==
+          Catch::Approx(-2.0 * pvf - pvs + pvf * pvf).epsilon(1e-14));
+
+    const double second = a502::pressureCoefficient(
+        perturbation, freestream, flow.mach,
+        a502::CpFormula::SecondOrder);
+    CHECK(second == Catch::Approx(-2.0 * pvf - pvs + mach2 * pvf * pvf)
+                         .epsilon(1e-14));
+
+    const double isentropic = a502::pressureCoefficient(
+        perturbation, freestream, flow.mach,
+        a502::CpFormula::Isentropic);
+    const double cpIncompressible = 1.0 - (1.0 + 2.0 * pvf + pvs);
+    const double expectedIsentropic =
+        (1.4285714285714286 / mach2) *
+        (std::pow(std::max(0.0, 1.0 + 0.2 * mach2 * cpIncompressible),
+                  3.5) -
+         1.0);
+    CHECK(isentropic ==
+          Catch::Approx(expectedIsentropic).epsilon(1e-12));
+
+    a502::CpMaterialRatios material;
+    material.velocity = 1.1;
+    material.temperature = 0.9;
+    material.pressure = 0.95;
+    material.cpFactor = 1.2;
+    CHECK(a502::pressureCoefficient(
+              perturbation, freestream, flow.mach, a502::CpFormula::Linear,
+              material) ==
+          Catch::Approx(1.2 * linear).epsilon(1e-14));
+    CHECK(a502::pressureCoefficient(
+              perturbation, freestream, flow.mach,
+              a502::CpFormula::SlenderBody, material) ==
+          Catch::Approx(1.2 * slender).epsilon(1e-14));
+    CHECK(a502::pressureCoefficient(
+              perturbation, freestream, flow.mach,
+              a502::CpFormula::SecondOrder, material) ==
+          Catch::Approx(1.2 * second).epsilon(1e-14));
+
+    const double fac =
+        material.velocity * material.velocity / material.temperature;
+    const double cpMaterial = 1.0 - fac * (1.0 + 2.0 * pvf + pvs);
+    const double expectedMaterialIsentropic =
+        (1.4285714285714286 / mach2) *
+        (material.pressure *
+             std::pow(std::max(0.0, 1.0 + 0.2 * mach2 * cpMaterial), 3.5) -
+         1.0);
+    CHECK(a502::pressureCoefficient(
+              perturbation, freestream, flow.mach,
+              a502::CpFormula::Isentropic, material) ==
+          Catch::Approx(expectedMaterialIsentropic).epsilon(1e-12));
+
+    // The total-velocity helper agrees with the linear perturbation rule.
+    CHECK(a502::linearPressureCoefficient(freestream + perturbation,
+                                          freestream) ==
+          Catch::Approx(linear).epsilon(1e-14));
+
+    // Zero perturbation gives zero Cp for every default-material rule.
+    for (a502::CpFormula formula :
+         {a502::CpFormula::Linear, a502::CpFormula::SlenderBody,
+          a502::CpFormula::SecondOrder, a502::CpFormula::Isentropic}) {
+        CHECK(a502::pressureCoefficient(
+                  Eigen::Vector3d::Zero(), freestream, flow.mach, formula) ==
+              0.0);
+    }
+
+    // Degenerate freestream is guarded.
+    CHECK(a502::pressureCoefficient(
+              perturbation, Eigen::Vector3d::Zero(), flow.mach,
+              a502::CpFormula::Linear) == 0.0);
+}
+
 TEST_CASE("matching: shared full edge", "[matching]") {
     auto makeGrid = [](double y0, const char* name) {
         a502::Network net;
@@ -1797,6 +1887,27 @@ TEST_CASE("global boundary system: active columns and matching rows",
             nonZeroCp = true;
     }
     CHECK(nonZeroCp);
+
+    // Second-order Cp uses the same surface velocities.
+    const auto secondOrder = a502::evaluateSurfaceFlow(
+        doubletOnly, flowAlpha, doubletLayout, values, true,
+        a502::CpFormula::SecondOrder);
+    REQUIRE(secondOrder.valid);
+    REQUIRE(secondOrder.cp.size() == surfaceFlow.cp.size());
+    for (std::size_t k = 0; k < secondOrder.cp.size(); ++k) {
+        const Eigen::Vector3d perturbation =
+            surfaceFlow.velocity[k] - flowAlpha.compd;
+        CHECK(surfaceFlow.cp[k] ==
+              Catch::Approx(a502::linearPressureCoefficient(
+                                surfaceFlow.velocity[k], flowAlpha.compd))
+                  .epsilon(1e-12));
+        CHECK(secondOrder.cp[k] ==
+              Catch::Approx(a502::pressureCoefficient(
+                                perturbation, flowAlpha.compd,
+                                flowAlpha.mach,
+                                a502::CpFormula::SecondOrder))
+                  .epsilon(1e-12));
+    }
 
     // Solver sanity check with an exactly solvable system.
     a502::GlobalBoundarySystem exact;
