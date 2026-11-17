@@ -431,6 +431,11 @@ LeftHandBoundaryOption buildLeftHandBoundaryOption(
         out.hasCondition = false;
         return out;
     }
+    if (nlopt < 0) {
+        // Negative option values select upper/lower surfaces in the BC map;
+        // the map is not parsed yet.
+        return out;
+    }
     out.hasCondition = true;
 
     BoundaryConditionCoefficients bc;

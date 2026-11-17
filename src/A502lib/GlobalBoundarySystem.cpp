@@ -11,8 +11,10 @@
 #include "NetworkInfluence.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 namespace a502 {
 
@@ -69,30 +71,39 @@ GlobalBoundarySystem buildGlobalNormalFluxSystemImpl(
             if (!local.valid)
                 return GlobalBoundarySystem{};
 
-            BoundaryConditionCoefficients bc;
             if (!useNetworkDefaults) {
-                bc = standardNormalMassFlux(cu, cl, cp.normal, flow.compd);
-            } else {
-                // First available default condition at this control point.
-                const NetworkTypeDefaults defaults =
-                    networkTypeDefaults(net.kt, flow.mach);
-                int nlopt = 0;
-                int nropt = 0;
-                if (defaults.nlopt1 != 0) {
-                    nlopt = defaults.nlopt1;
-                    nropt = defaults.nropt1;
-                } else if (defaults.nlopt2 != 0) {
-                    nlopt = defaults.nlopt2;
-                    nropt = defaults.nropt2;
-                } else {
-                    continue; // no boundary condition at this point
-                }
+                const BoundaryConditionCoefficients bc =
+                    standardNormalMassFlux(cu, cl, cp.normal, flow.compd);
+                BoundaryRow row = buildBoundaryRow(
+                    global, cp.normal, flow, bc, local);
+                if (!row.valid)
+                    return GlobalBoundarySystem{};
+                bcRows.push_back(std::move(row));
+                bcRhs.push_back(bc.bet);
+                continue;
+            }
+
+            // bconcl() emits one AIC row for each non-zero nlopt, so a
+            // control point may carry two boundary conditions (nlopt1 and
+            // nlopt2).  Edge/corner interpolation between adjacent panel
+            // centres and matching-condition overrides are not ported yet.
+            const NetworkTypeDefaults defaults =
+                networkTypeDefaults(net.kt, flow.mach);
+            const std::array<std::pair<int, int>, 2> conditions = {{
+                {defaults.nlopt1, defaults.nropt1},
+                {defaults.nlopt2, defaults.nropt2},
+            }};
+            for (const auto& condition : conditions) {
+                const int nlopt = condition.first;
+                const int nropt = condition.second;
+                if (nlopt == 0)
+                    continue;
 
                 const LeftHandBoundaryOption left =
                     buildLeftHandBoundaryOption(nlopt, flow, cp.normal);
                 if (!left.supported || !left.hasCondition)
                     return GlobalBoundarySystem{};
-                bc = left.coefficients;
+                BoundaryConditionCoefficients bc = left.coefficients;
 
                 const BoundaryRightHandSide right =
                     buildBoundaryRightHandSide(nropt, flow, cp.normal,
@@ -100,14 +111,15 @@ GlobalBoundarySystem buildGlobalNormalFluxSystemImpl(
                 if (!right.supported)
                     return GlobalBoundarySystem{};
                 bc.bet = right.hasValue ? right.value : 0.0;
-            }
-            BoundaryRow row = buildBoundaryRow(
-                global, cp.normal, flow, bc, local);
-            if (!row.valid)
-                return GlobalBoundarySystem{};
 
-            bcRows.push_back(std::move(row));
-            bcRhs.push_back(bc.bet);
+                BoundaryRow row = buildBoundaryRow(
+                    global, cp.normal, flow, bc, local);
+                if (!row.valid)
+                    return GlobalBoundarySystem{};
+
+                bcRows.push_back(std::move(row));
+                bcRhs.push_back(bc.bet);
+            }
         }
     }
 

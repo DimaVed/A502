@@ -4894,3 +4894,77 @@ TEST_CASE("network PIC: level dispatch in the global assembly",
               1e-12);
     }
 }
+
+TEST_CASE("default boundary conditions: nlopt1 and nlopt2 rows",
+          "[boundaryconditions][globalsystem]") {
+    a502::Network net;
+    net.netname = "composite";
+    net.kt = 1;
+    net.nm = 3;
+    net.nn = 3;
+    for (int n = 0; n < 3; ++n)
+        for (int m = 0; m < 3; ++m) {
+            net.coordinates.push_back(static_cast<double>(m));
+            net.coordinates.push_back(static_cast<double>(n));
+            net.coordinates.push_back(0.0);
+        }
+
+    const auto flow = a502::Compressibility::fromAngles(0.3, 0.0, 0.0);
+    const std::vector<a502::Network> networks = {net};
+    const auto layout = a502::buildGlobalSingularityLayout(networks);
+    REQUIRE(layout.network[0].source.count == 4);
+    REQUIRE(layout.network[0].doublet.count == 16);
+
+    const auto system = a502::buildGlobalDefaultBoundarySystem(
+        networks, flow, layout, std::vector<bool>{true}, 1.0e-10,
+        Eigen::Vector3d::Zero());
+    REQUIRE(system.valid);
+
+    const auto controlPoints = a502::buildNetworkControlPoints(net);
+    // kt=1 defaults are nlopt1=5,nropt1=3 and nlopt2=7,nropt2=2, so every
+    // control point contributes two rows.
+    REQUIRE(system.nBcRows ==
+            static_cast<int>(2 * controlPoints.size()));
+    REQUIRE(system.nRows == system.nBcRows);
+    CHECK(system.nActiveSource == 4);
+    CHECK(system.nActiveDoublet == 16);
+    REQUIRE(system.rhs.size() == system.nRows);
+
+    for (std::size_t k = 0; k < controlPoints.size(); ++k) {
+        const auto& cp = controlPoints[k];
+        // nropt=3: -cmpscl(1/betams, compd, zc - reference) . fsv.
+        const double c2 = flow.compd.squaredNorm();
+        const double f =
+            (1.0 / flow.betams - 1.0) * cp.position.dot(flow.compd) / c2;
+        const double expectedFirst = -(
+            cp.position.dot(flow.compd) + f * c2);
+        const double expectedSecond = -cp.normal.dot(flow.compd);
+        CHECK(system.rhs(static_cast<Eigen::Index>(2 * k)) ==
+              Catch::Approx(expectedFirst).epsilon(1e-12));
+        CHECK(system.rhs(static_cast<Eigen::Index>(2 * k + 1)) ==
+              Catch::Approx(expectedSecond).epsilon(1e-12));
+
+        // The first row is the difference normal mass flux (ca=0, so the
+        // doublet velocity term drops and the local source term remains);
+        // the second is the lower-surface potential (source and doublet
+        // potential terms).
+        const Eigen::Index row0 = static_cast<Eigen::Index>(2 * k);
+        const Eigen::Index row1 = row0 + 1;
+        const double source0 =
+            system.matrix.block(row0, 0, 1, system.nActiveSource).norm();
+        const double source1 =
+            system.matrix.block(row1, 0, 1, system.nActiveSource).norm();
+        const double doublet0 = system.matrix
+                                    .block(row0, system.nActiveSource, 1,
+                                           system.nActiveDoublet)
+                                    .norm();
+        const double doublet1 = system.matrix
+                                    .block(row1, system.nActiveSource, 1,
+                                           system.nActiveDoublet)
+                                    .norm();
+        CHECK(source0 > 0.0);
+        CHECK(doublet0 == 0.0);
+        CHECK(source1 > 0.0);
+        CHECK(doublet1 > 0.0);
+    }
+}
