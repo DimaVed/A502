@@ -9,6 +9,7 @@
 
 #include "AeroModel.h"
 #include "Compressibility.h"
+#include "BoundaryConditions.h"
 #include "GlobalInfluence.h"
 #include "Influence.h"
 #include "NearField.h"
@@ -996,6 +997,112 @@ TEST_CASE("global influence: two networks and column offsets",
           1e-12);
     CHECK(aic.source.allFinite());
     CHECK(aic.doublet.allFinite());
+}
+
+TEST_CASE("boundary condition rows: nct=1 and nct=4",
+          "[boundaryconditions]") {
+    a502::Network net;
+    net.netname = "grid";
+    net.nm = 8;
+    net.nn = 8;
+    for (int n = 0; n < 8; ++n) {
+        for (int m = 0; m < 8; ++m) {
+            net.coordinates.push_back(static_cast<double>(m));
+            net.coordinates.push_back(static_cast<double>(n));
+            net.coordinates.push_back(0.0);
+        }
+    }
+
+    const auto flow = a502::Compressibility::fromAngles(0.6, 0.0, 0.0);
+    const std::vector<a502::Network> networks = {net};
+    const auto globalLayout =
+        a502::buildGlobalSingularityLayout(networks);
+    REQUIRE(globalLayout.totalSource == 49);
+    REQUIRE(globalLayout.totalDoublet == 81);
+
+    auto panel = a502::buildPanelGeometry(net.coordinates, 8, 8, 3, 3);
+    REQUIRE_FALSE(panel.degenerate);
+    a502::applyCompressibleFrames(panel, flow);
+
+    const Eigen::Vector3d fieldPoint =
+        panel.cp[8] + 0.01 * panel.normal;
+    const auto influence = a502::evaluateGlobalNearFieldInfluence(
+        networks, flow, fieldPoint, globalLayout);
+    REQUIRE(influence.valid);
+
+    const auto local = a502::buildPanelCenterLocalTerms(
+        net, flow, 3, 3, globalLayout.network[0].doublet);
+    REQUIRE(local.valid);
+
+    Eigen::VectorXd sourceValues(49);
+    Eigen::VectorXd doubletValues(81);
+    for (int k = 0; k < 49; ++k)
+        sourceValues(k) = 0.01 * (k + 1);
+    for (int k = 0; k < 81; ++k)
+        doubletValues(k) = -0.005 * (k + 1);
+
+    const Eigen::Vector3d inducedVelocity =
+        influence.source.block(1, 0, 3, 49) * sourceValues +
+        influence.doublet.block(1, 0, 3, 81) * doubletValues;
+
+    // nct=1: ca*n.v + cd*local source value.
+    a502::BoundaryConditionCoefficients bc1;
+    bc1.nct = 1;
+    bc1.cu = 0.7;
+    bc1.cl = 0.2;
+    bc1.bet = 0.3;
+    const auto row1 = a502::buildBoundaryRow(
+        influence, panel.normal, flow, bc1, local);
+    REQUIRE(row1.valid);
+    CHECK(row1.rhs == Catch::Approx(0.3).epsilon(1e-14));
+
+    const double ca = bc1.cu + bc1.cl;
+    const double cd = 0.5 * (bc1.cu - bc1.cl);
+    double localSourceValue = 0.0;
+    for (std::size_t k = 0; k < local.sourceId.size(); ++k)
+        localSourceValue +=
+            local.sourceValue(static_cast<Eigen::Index>(k)) *
+            sourceValues(local.sourceId[k]);
+
+    const double got1 = row1.source.dot(sourceValues) +
+                        row1.doublet.dot(doubletValues);
+    const double want1 =
+        ca * panel.normal.dot(inducedVelocity) + cd * localSourceValue;
+    CHECK(got1 == Catch::Approx(want1).epsilon(1e-10));
+
+    // nct=4: da*potential + dd*local doublet potential.
+    a502::BoundaryConditionCoefficients bc4;
+    bc4.nct = 4;
+    bc4.du = 0.4;
+    bc4.dl = 0.1;
+    bc4.bet = -0.2;
+    const auto row4 = a502::buildBoundaryRow(
+        influence, panel.normal, flow, bc4, local);
+    REQUIRE(row4.valid);
+    CHECK(row4.rhs == Catch::Approx(-0.2).epsilon(1e-14));
+
+    const double da = bc4.du + bc4.dl;
+    const double dd = 0.5 * (bc4.du - bc4.dl);
+    const double potential =
+        influence.source.row(0).dot(sourceValues) +
+        influence.doublet.row(0).dot(doubletValues);
+    double localDoubletValue = 0.0;
+    for (std::size_t k = 0; k < local.doubletId.size(); ++k)
+        localDoubletValue +=
+            local.doubletValue(static_cast<Eigen::Index>(k)) *
+            doubletValues(local.doubletId[k]);
+
+    const double got4 = row4.source.dot(sourceValues) +
+                        row4.doublet.dot(doubletValues);
+    const double want4 =
+        da * potential + dd * localDoubletValue;
+    CHECK(got4 == Catch::Approx(want4).epsilon(1e-10));
+
+    a502::BoundaryConditionCoefficients bad;
+    bad.nct = 2;
+    CHECK_FALSE(a502::buildBoundaryRow(
+                    influence, panel.normal, flow, bad, local)
+                    .valid);
 }
 
 TEST_CASE("control points: single square network", "[controlpoints]") {
