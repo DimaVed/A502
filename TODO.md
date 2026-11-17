@@ -27,6 +27,9 @@
     для far-field;
   - far-field `ffpic`/`ffdqgv` для квадратичного doublet-базиса
     (`nf=6`), сверен с near-field по сходимости мультиполей;
+  - диспетчеризация панельного PIC по `influenceLevel`:
+    уровни 1..3 — far-field, 4 — one-subpanel `qffcal`, 5/6 — near-field
+    (уровень 5 пока как fallback, полный `qnfcal` не портирован);
   - сборка влияния панели и сети;
   - промежуточное `qffcal`-приближение.
 - Глобальные AIC-строки, в том числе по нескольким сетям.
@@ -98,9 +101,10 @@
 - PIC не завершён:
   - far-field `ffpic` портирован для `nf=6`; кубические члены
     (`nf=10`, `ffdqg` cubic basis) не проверены и не подключены;
-  - нет диспетчеризации по `influenceLevel`: near-field по-прежнему
-    используется для всех расстояний (медленно и хуже обусловлено);
-  - нет полного `qnfcal`;
+  - диспетчер `panelPicInfluence` готов, но сетевая/глобальная сборка
+    (`evaluateNetworkNearFieldInfluence`, `buildGlobalNearFieldAic`)
+    по-прежнему всегда использует near-field;
+  - нет полного `qnfcal`: уровень 5 (two-subpanel) падает в near-field;
   - supersonic near-field (`supsbi` и `supspi`/`aicsup`) портирован и
     проверен численным интегрированием ядра; far-field для
     сверхзвуковых суперinclined-панелей не проверялся.
@@ -178,7 +182,9 @@
    - `supsbi` — готово;
    - `supspi`/`aicsup` — готово;
    - `nftpic` dispatch по `iin` — готово.
-4. Диспетчеризация по `influenceLevel` вместо near-field везде.
+4. Диспетчеризация по `influenceLevel` вместо near-field везде:
+   панельный уровень готов, осталось подключить сетевую/глобальную
+   сборку.
 5. Сравнение far/intermediate/near на одних и тех же точках.
 
 ### Этап 5. Постпроцессинг и интеграция
@@ -223,9 +229,11 @@
   панельными сплайнами. Проверено сходимостью far-field к near-field
   на расстояниях 10/100/1000 диаметров; мультиполь `iflu=3` даёт
   ошибку ~`8e-6`, `2e-9`, `6e-12`.
-- [ ] Добавить диспетчеризацию PIC по `influenceLevel`
-  (1..3 — far-field, 4/5 — intermediate, 6 — near-field) и тесты на
-  переключение уровней.
+- [x] Добавить панельную диспетчеризацию PIC по `influenceLevel`
+  (`panelPicInfluence`: 1..3 — far-field, 4 — `qffcal`, 5/6 — near-field).
+  Покрыто тестами на все уровни, `its=1/2/3`, level 0 и авто-выбор.
+- [ ] Подключить `panelPicInfluence` к `evaluateNetworkNearFieldInfluence`
+  и глобальной сборке AIC, не меняя явный near-field API для BC/тестов.
 - [ ] Кубический far-field (`nf=10`, cubic terms в `ffpic`/`ffdqg`).
 - [ ] Портировать полный `qnfcal`.
 - [x] Портировать `supsbi` и диспетчеризацию `nftpic` по `iin`

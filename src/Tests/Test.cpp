@@ -20,6 +20,7 @@
 #include "NetworkInfluence.h"
 #include "PanelGeometry.h"
 #include "PanelParameters.h"
+#include "Pic.h"
 #include "OuterSplines.h"
 #include "EdgeSplines.h"
 #include "SubpanelSplines.h"
@@ -4698,5 +4699,94 @@ TEST_CASE("far-field: multipole convergence to the near field",
                     .valid);
     CHECK_FALSE(a502::farFieldPanelInfluence(
                     panel, flow, center, 4, 6, 3)
+                    .valid);
+}
+
+TEST_CASE("PIC dispatch: influence level selects the PIC method",
+          "[pic][farfield]") {
+    const std::vector<double> coordinates = {
+        0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 1.0, 1.0, 0.0};
+    a502::PanelGeometry panel =
+        a502::buildPanelGeometry(coordinates, 2, 2, 0, 0);
+    REQUIRE_FALSE(panel.degenerate);
+    const auto flow = a502::Compressibility::fromAngles(0.3, 0.0, 0.0);
+    a502::applyCompressibleFrames(panel, flow);
+    const Eigen::Vector3d center = panel.cp[8];
+    const Eigen::Vector3d farPoint = center + Eigen::Vector3d(0, 0, 100.0);
+    const Eigen::Vector3d nearPoint = center + Eigen::Vector3d(0, 0, 0.5);
+
+    // Explicit far-field levels.
+    for (int level = 1; level <= 3; ++level) {
+        const auto selected =
+            a502::panelPicInfluence(panel, flow, farPoint, 3, 6, level);
+        const auto far = a502::farFieldPanelInfluence(
+            panel, flow, farPoint, level, 6, 3);
+        REQUIRE(selected.valid);
+        REQUIRE(far.valid);
+        CHECK((selected.source - far.source).norm() < 1e-13);
+        CHECK((selected.doublet - far.doublet).norm() < 1e-13);
+    }
+
+    // Level 4 is the one-subpanel qffcal() path; levels 5 and 6 use the
+    // near field until the two-subpanel qnfcal() branch is ported.
+    const auto intermediate =
+        a502::panelIntermediateInfluence(panel, flow, farPoint, 3, 6);
+    REQUIRE(intermediate.valid);
+    const auto level4 =
+        a502::panelPicInfluence(panel, flow, farPoint, 3, 6, 4);
+    REQUIRE(level4.valid);
+    CHECK((level4.source - intermediate.source).norm() < 1e-13);
+    CHECK((level4.doublet - intermediate.doublet).norm() < 1e-13);
+
+    const auto near =
+        a502::panelNearFieldInfluence(panel, flow, nearPoint, 6);
+    REQUIRE(near.valid);
+    for (int level : {5, 6}) {
+        const auto selected =
+            a502::panelPicInfluence(panel, flow, nearPoint, 3, 6, level);
+        REQUIRE(selected.valid);
+        CHECK((selected.source - near.source).norm() < 1e-13);
+        CHECK((selected.doublet - near.doublet).norm() < 1e-13);
+    }
+
+    // Level 0 is a zero influence.
+    const auto zero =
+        a502::panelPicInfluence(panel, flow, nearPoint, 3, 6, 0);
+    REQUIRE(zero.valid);
+    CHECK(zero.source.isZero(0.0));
+    CHECK(zero.doublet.isZero(0.0));
+
+    // Automatic selection at a far point must land on the far field.
+    const int automatic = a502::influenceLevel(panel, flow, farPoint);
+    REQUIRE(automatic == 1);
+    const auto autoSelected =
+        a502::panelPicInfluence(panel, flow, farPoint, 3, 6, -1);
+    const auto autoFar = a502::farFieldPanelInfluence(
+        panel, flow, farPoint, automatic, 6, 3);
+    REQUIRE(autoSelected.valid);
+    CHECK((autoSelected.source - autoFar.source).norm() < 1e-13);
+    CHECK((autoSelected.doublet - autoFar.doublet).norm() < 1e-13);
+
+    // Source-only and doublet-only panels leave the inactive block zero on
+    // every dispatched level.
+    for (int level = 1; level <= 6; ++level) {
+        const auto sourceOnly =
+            a502::panelPicInfluence(panel, flow, farPoint, 1, 6, level);
+        REQUIRE(sourceOnly.valid);
+        CHECK_FALSE(sourceOnly.source.isZero(0.0));
+        CHECK(sourceOnly.doublet.isZero(0.0));
+
+        const auto doubletOnly =
+            a502::panelPicInfluence(panel, flow, farPoint, 2, 6, level);
+        REQUIRE(doubletOnly.valid);
+        CHECK(doubletOnly.source.isZero(0.0));
+        CHECK_FALSE(doubletOnly.doublet.isZero(0.0));
+    }
+
+    // Unsupported nf and singularity types are rejected.
+    CHECK_FALSE(a502::panelPicInfluence(panel, flow, farPoint, 3, 10, 6)
+                    .valid);
+    CHECK_FALSE(a502::panelPicInfluence(panel, flow, farPoint, 0, 6, 6)
                     .valid);
 }
