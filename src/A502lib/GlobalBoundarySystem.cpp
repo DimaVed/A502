@@ -241,6 +241,75 @@ GlobalSystemDiagnostics analyzeGlobalBoundarySystem(
     return out;
 }
 
+GlobalEquationAudit auditGlobalEquationCounts(
+    const std::vector<Network>& networks,
+    const GlobalSingularityLayout& layout,
+    double matchingTolerance) {
+    GlobalEquationAudit out;
+    if (networks.empty() || layout.network.size() != networks.size())
+        return out;
+
+    out.networks.reserve(networks.size());
+    for (std::size_t k = 0; k < networks.size(); ++k) {
+        const Network& net = networks[k];
+        const NetworkSingularityLayout& netLayout = layout.network[k];
+
+        NetworkEquationAudit entry;
+        entry.network = static_cast<int>(k);
+        entry.kt = net.kt;
+        entry.hasSource = netLayout.hasSource;
+        entry.hasDoublet = netLayout.hasDoublet;
+        entry.nSourceParameters = netLayout.source.count;
+        entry.nDoubletParameters = netLayout.doublet.count;
+        entry.activeSource =
+            netLayout.hasSource ? netLayout.source.count : 0;
+        entry.activeDoublet =
+            netLayout.hasDoublet ? netLayout.doublet.count : 0;
+
+        const std::vector<ControlPoint> controlPoints =
+            buildNetworkControlPoints(net);
+        entry.nControlPoints = static_cast<int>(controlPoints.size());
+        for (const ControlPoint& cp : controlPoints) {
+            switch (cp.kind) {
+            case ControlPointKind::PanelCenter:
+                ++entry.nPanelCenters;
+                break;
+            case ControlPointKind::EdgeMidpoint:
+                ++entry.nEdgePoints;
+                break;
+            case ControlPointKind::Corner:
+                ++entry.nCornerPoints;
+                break;
+            }
+        }
+
+        out.totalActiveUnknowns +=
+            entry.activeSource + entry.activeDoublet;
+        out.totalControlPoints += entry.nControlPoints;
+        out.totalCenterRows += entry.nPanelCenters;
+        out.totalAllPointRows += entry.nControlPoints;
+        out.networks.push_back(entry);
+    }
+
+    const std::vector<NetworkEdge> edges = buildNetworkEdges(networks);
+    const std::vector<EdgeMatch> matches =
+        findFullEdgeMatches(edges, matchingTolerance);
+    if (!matches.empty()) {
+        const MatchingRows rows =
+            buildEdgeDoubletMatchingRows(networks, layout, matches);
+        if (!rows.valid)
+            return GlobalEquationAudit{};
+        out.nMatchingRows = rows.nRows;
+    }
+
+    out.centerDeficit = out.totalActiveUnknowns -
+                        out.totalCenterRows - out.nMatchingRows;
+    out.allPointDeficit = out.totalActiveUnknowns -
+                          out.totalAllPointRows - out.nMatchingRows;
+    out.valid = true;
+    return out;
+}
+
 GlobalSystemSolution solveGlobalBoundarySystem(
     const GlobalBoundarySystem& system,
     const GlobalSolveOptions& options) {

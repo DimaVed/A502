@@ -70,6 +70,48 @@ struct GlobalSystemDiagnostics {
 GlobalSystemDiagnostics analyzeGlobalBoundarySystem(
     const GlobalBoundarySystem& system, double tolerance = 1.0e-12);
 
+// Equation/unknown accounting for the current assembly.  Rows are counted
+// for two modes: panel-centre control points only, and all control points
+// (centres + network-edge midpoints + corners).  Matching rows are included
+// in both.  Deficits are active unknowns minus available rows; a negative
+// value means the row set is over-determined.
+//
+// For a network with both singularity types the staggered doublet grid has
+// exactly as many parameters as it has control points, so the all-point
+// deficit equals the number of source parameters.  Closing that composite
+// deficit is the open A502-conditions question.
+struct NetworkEquationAudit {
+    int network{0};
+    int kt{0};
+    bool hasSource{false};
+    bool hasDoublet{false};
+    int nPanelCenters{0};
+    int nEdgePoints{0};
+    int nCornerPoints{0};
+    int nControlPoints{0};
+    int nSourceParameters{0};
+    int nDoubletParameters{0};
+    int activeSource{0};
+    int activeDoublet{0};
+};
+
+struct GlobalEquationAudit {
+    std::vector<NetworkEquationAudit> networks;
+    int totalActiveUnknowns{0};
+    int totalControlPoints{0};
+    int totalCenterRows{0};
+    int totalAllPointRows{0};
+    int nMatchingRows{0};
+    int centerDeficit{0};
+    int allPointDeficit{0};
+    bool valid{false};
+};
+
+GlobalEquationAudit auditGlobalEquationCounts(
+    const std::vector<Network>& networks,
+    const GlobalSingularityLayout& layout,
+    double matchingTolerance = 1.0e-10);
+
 struct GlobalSystemSolution {
     Eigen::VectorXd unknowns; // active source block, then active doublet
     double residualNorm{0.0};

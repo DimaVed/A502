@@ -2092,6 +2092,79 @@ TEST_CASE("global system: mixed source-only and doublet-only networks",
     CHECK(adjacentSystem.nColumns == 34);
 }
 
+TEST_CASE("global system: equation/unknown audit", "[globalsystem]") {
+    auto makeGrid = [](double y0, int kt, const char* name) {
+        a502::Network net;
+        net.netname = name;
+        net.nm = 4;
+        net.nn = 4;
+        net.kt = kt;
+        for (int n = 0; n < 4; ++n) {
+            for (int m = 0; m < 4; ++m) {
+                net.coordinates.push_back(static_cast<double>(m));
+                net.coordinates.push_back(y0 + static_cast<double>(n));
+                net.coordinates.push_back(0.0);
+            }
+        }
+        return net;
+    };
+
+    auto auditSingle = [&](int kt) {
+        const std::vector<a502::Network> networks = {
+            makeGrid(0.0, kt, "n")};
+        const auto layout =
+            a502::buildGlobalSingularityLayout(networks);
+        const auto audit =
+            a502::auditGlobalEquationCounts(networks, layout);
+        REQUIRE(audit.valid);
+        REQUIRE(audit.networks.size() == 1);
+        const auto& n = audit.networks[0];
+        CHECK(n.nPanelCenters == 9);
+        CHECK(n.nEdgePoints == 12);
+        CHECK(n.nCornerPoints == 4);
+        CHECK(n.nControlPoints == 25);
+        CHECK(n.nSourceParameters == 9);
+        CHECK(n.nDoubletParameters == 25);
+        CHECK(audit.totalControlPoints == 25);
+        CHECK(audit.totalCenterRows == 9);
+        CHECK(audit.totalAllPointRows == 25);
+        CHECK(audit.nMatchingRows == 0);
+        return audit;
+    };
+
+    const auto composite = auditSingle(1);
+    CHECK(composite.totalActiveUnknowns == 34);
+    CHECK(composite.centerDeficit == 25);
+    CHECK(composite.allPointDeficit == 9);
+
+    const auto doubletOnly = auditSingle(12);
+    CHECK(doubletOnly.totalActiveUnknowns == 25);
+    CHECK(doubletOnly.centerDeficit == 16);
+    CHECK(doubletOnly.allPointDeficit == 0);
+
+    const auto sourceOnly = auditSingle(7);
+    CHECK(sourceOnly.totalActiveUnknowns == 9);
+    CHECK(sourceOnly.centerDeficit == 0);
+    CHECK(sourceOnly.allPointDeficit == -16);
+
+    // Two composite networks sharing one full edge.
+    const std::vector<a502::Network> networks = {
+        makeGrid(0.0, 1, "a"), makeGrid(3.0, 1, "b")};
+    const auto layout =
+        a502::buildGlobalSingularityLayout(networks);
+    const auto audit =
+        a502::auditGlobalEquationCounts(networks, layout);
+    REQUIRE(audit.valid);
+    REQUIRE(audit.networks.size() == 2);
+    CHECK(audit.totalActiveUnknowns == 68);
+    CHECK(audit.totalControlPoints == 50);
+    CHECK(audit.totalCenterRows == 18);
+    CHECK(audit.totalAllPointRows == 50);
+    CHECK(audit.nMatchingRows == 5);
+    CHECK(audit.centerDeficit == 45);
+    CHECK(audit.allPointDeficit == 13);
+}
+
 TEST_CASE("global system: equilibration and diagnostics", "[globalsystem]") {
     a502::GlobalBoundarySystem scaled;
     scaled.nRows = 3;
