@@ -10,6 +10,7 @@
 #include "AeroModel.h"
 #include "Compressibility.h"
 #include "BoundaryConditions.h"
+#include "FarField.h"
 #include "FlowSolution.h"
 #include "GlobalBoundarySystem.h"
 #include "GlobalInfluence.h"
@@ -4563,3 +4564,139 @@ TEST_CASE("supersonic near-field: kernel dispatch", "[nearfield]") {
     CHECK(superInfluence.doublet.allFinite());
 }
 
+
+TEST_CASE("near-plane quadratic: qcof reproduces quadratic values",
+          "[panelmoments][farfield]") {
+    const std::array<Eigen::Vector3d, 9> cp = {
+        Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(1, 0, 0),
+        Eigen::Vector3d(1, 1, 0), Eigen::Vector3d(0, 1, 0),
+        Eigen::Vector3d(0.5, 0, 0), Eigen::Vector3d(1, 0.5, 0),
+        Eigen::Vector3d(0.5, 1, 0), Eigen::Vector3d(0, 0.5, 0),
+        Eigen::Vector3d(0.5, 0.5, 0)};
+
+    // An in-plane scaling and rotation: qcof works in the inner-panel frame.
+    Eigen::Matrix3d frame;
+    const double c = std::cos(0.3);
+    const double s = std::sin(0.3);
+    frame << 2.0 * c, -2.0 * s, 0.0,
+             3.0 * s,  3.0 * c, 0.0,
+             0.0,      0.0,     1.0;
+
+    const auto qa = a502::buildNearPlaneQuadratic(cp, frame);
+    REQUIRE(qa.valid);
+
+    Eigen::Matrix<double, 9, 6> basis;
+    for (int j = 0; j < 9; ++j) {
+        const Eigen::Vector3d local = frame * (cp[j] - cp[8]);
+        basis(j, 0) = 1.0;
+        basis(j, 1) = local.x();
+        basis(j, 2) = local.y();
+        basis(j, 3) = 0.5 * local.x() * local.x();
+        basis(j, 4) = local.x() * local.y();
+        basis(j, 5) = 0.5 * local.y() * local.y();
+    }
+
+    for (int k = 0; k < 6; ++k) {
+        const Eigen::Matrix<double, 6, 1> fit =
+            qa.coefficients * basis.col(k);
+        Eigen::Matrix<double, 6, 1> expected =
+            Eigen::Matrix<double, 6, 1>::Zero();
+        expected(k) = 1.0;
+        INFO("basis " << k);
+        CHECK((fit - expected).norm() < 1e-12);
+    }
+}
+
+TEST_CASE("far-field: multipole convergence to the near field",
+          "[farfield]") {
+    const std::vector<double> coordinates = {
+        0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 1.0, 1.0, 0.0};
+    a502::PanelGeometry panel =
+        a502::buildPanelGeometry(coordinates, 2, 2, 0, 0);
+    REQUIRE_FALSE(panel.degenerate);
+    const auto flow = a502::Compressibility::fromAngles(0.3, 0.0, 0.0);
+    a502::applyCompressibleFrames(panel, flow);
+    REQUIRE(panel.subpanels[4].scaledValid);
+
+    const Eigen::Matrix3d frame = panel.subpanels[4].scaledToLocal;
+    const Eigen::Vector3d center = panel.cp[8];
+    std::array<Eigen::Vector3d, 9> local;
+    for (int j = 0; j < 9; ++j)
+        local[static_cast<std::size_t>(j)] =
+            frame * (panel.cp[static_cast<std::size_t>(j)] - center);
+
+    a502::PanelSourceValues sigma;
+    a502::PanelDoubletValues mu;
+    for (int j = 0; j < 9; ++j) {
+        const double x = local[static_cast<std::size_t>(j)].x();
+        const double y = local[static_cast<std::size_t>(j)].y();
+        mu(j) = 1.0 + 0.3 * x + 0.2 * y + 0.05 * x * x -
+                0.02 * y * y + 0.01 * x * y;
+        if (j < 4)
+            sigma(j) = 1.0 + 0.3 * x + 0.2 * y;
+    }
+    sigma(4) = 1.0;
+
+    double previous = 1.0e30;
+    for (double distance : {10.0, 100.0, 1000.0}) {
+        const Eigen::Vector3d fieldPoint =
+            center + Eigen::Vector3d(0.0, 0.0, distance);
+        const auto near = a502::panelNearFieldInfluence(
+            panel, flow, fieldPoint, 6);
+        REQUIRE(near.valid);
+
+        for (int iflu = 1; iflu <= 3; ++iflu) {
+            const auto far = a502::farFieldPanelInfluence(
+                panel, flow, fieldPoint, iflu, 6, 3);
+            REQUIRE(far.valid);
+
+            const Eigen::Vector4d nearSource = near.source * sigma;
+            const Eigen::Vector4d farSource = far.source * sigma;
+            const Eigen::Vector4d nearDoublet = near.doublet * mu;
+            const Eigen::Vector4d farDoublet = far.doublet * mu;
+
+            const double sourceError =
+                (farSource - nearSource).norm() / nearSource.norm();
+            const double doubletError =
+                (farDoublet - nearDoublet).norm() / nearDoublet.norm();
+            INFO("distance " << distance << " iflu " << iflu
+                             << " source error " << sourceError
+                             << " doublet error " << doubletError);
+            CHECK(sourceError < 1.0);
+            CHECK(doubletError < 1.0);
+            if (iflu == 3) {
+                CHECK(doubletError < previous);
+                previous = doubletError;
+            }
+        }
+    }
+
+    // its selects the singularity blocks.
+    const auto sourceOnly = a502::farFieldPanelInfluence(
+        panel, flow, center + Eigen::Vector3d(0.0, 0.0, 100.0), 3, 6, 1);
+    REQUIRE(sourceOnly.valid);
+    CHECK_FALSE(sourceOnly.source.isZero(0.0));
+    CHECK(sourceOnly.doublet.isZero(0.0));
+
+    const auto doubletOnly = a502::farFieldPanelInfluence(
+        panel, flow, center + Eigen::Vector3d(0.0, 0.0, 100.0), 3, 6, 2);
+    REQUIRE(doubletOnly.valid);
+    CHECK(doubletOnly.source.isZero(0.0));
+    CHECK_FALSE(doubletOnly.doublet.isZero(0.0));
+
+    const auto both = a502::farFieldPanelInfluence(
+        panel, flow, center + Eigen::Vector3d(0.0, 0.0, 100.0), 3, 6, 3);
+    REQUIRE(both.valid);
+    CHECK((sourceOnly.source - both.source).norm() < 1e-13);
+    CHECK((doubletOnly.doublet - both.doublet).norm() < 1e-13);
+
+    // Unsupported cubic doublet basis and invalid parameters are rejected.
+    CHECK_FALSE(a502::farFieldPanelInfluence(
+                    panel, flow, center + Eigen::Vector3d(0.0, 0.0, 100.0),
+                    3, 10, 3)
+                    .valid);
+    CHECK_FALSE(a502::farFieldPanelInfluence(
+                    panel, flow, center, 4, 6, 3)
+                    .valid);
+}

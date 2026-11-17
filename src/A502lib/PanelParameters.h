@@ -43,10 +43,25 @@ NearPlane buildNearPlane(const std::array<Eigen::Vector3d, 4>& corners);
 // ccaln()/panmom(): area moments of the panel polygon projected onto the
 // local x-y plane:
 //   c(i,j) = integral x^(i-1) y^(j-1) dA,  i,j = 1..degree+1.
-// ics is the skipped (collapsed) corner, 0 for a quadrilateral.  The vertex
+// ics is the skipped (collapsed) edge, 0 for a quadrilateral.  The vertex
 // order must be counterclockwise for a positive area.
 Eigen::MatrixXd panelAreaMoments(
     const std::array<Eigen::Vector3d, 4>& vertices, int nside, int ics,
     int degree);
+
+// qcof(): near-plane quadratic doublet distribution used by the far-field
+// expansion.  The rows are the coefficients of
+//   [1, x, y, x^2/2, x*y, y^2/2]
+// in the inner-panel frame, and the columns are the canonical doublet
+// values at P1..P9.
+struct NearPlaneQuadratic {
+    Eigen::Matrix<double, 6, 9> coefficients{
+        Eigen::Matrix<double, 6, 9>::Zero()};
+    bool valid{false};
+};
+
+NearPlaneQuadratic buildNearPlaneQuadratic(
+    const std::array<Eigen::Vector3d, 9>& cp,
+    const Eigen::Matrix3d& innerToLocal);
 
 } // namespace a502

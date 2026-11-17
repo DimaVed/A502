@@ -23,7 +23,10 @@
   - subsonic near-field `subsbi` по подпанелям;
   - supersonic subinclined `supsbi`, superinclined `supspi`/`aicsup`
     и dispatch `nftpic` по `iin`;
-  - панельные моменты `panmom`/`ccaln` для будущего far-field;
+  - панельные моменты `panmom`/`ccaln` и near-plane quadratic `qcof`
+    для far-field;
+  - far-field `ffpic`/`ffdqgv` для квадратичного doublet-базиса
+    (`nf=6`), сверен с near-field по сходимости мультиполей;
   - сборка влияния панели и сети;
   - промежуточное `qffcal`-приближение.
 - Глобальные AIC-строки, в том числе по нескольким сетям.
@@ -93,13 +96,14 @@
     A502-elimination (known/zeroed/dependent параметры);
   - нет полного учёта ориентации/знаков.
 - PIC не завершён:
-  - нет far-field `ffpic`;
+  - far-field `ffpic` портирован для `nf=6`; кубические члены
+    (`nf=10`, `ffdqg` cubic basis) не проверены и не подключены;
+  - нет диспетчеризации по `influenceLevel`: near-field по-прежнему
+    используется для всех расстояний (медленно и хуже обусловлено);
   - нет полного `qnfcal`;
   - supersonic near-field (`supsbi` и `supspi`/`aicsup`) портирован и
-    проверен численным интегрированием ядра; нет far-field (`ffpic`) и
-    full `qnfcal`;
-  - near-field используется для всех расстояний (медленно и хуже
-    обусловлено).
+    проверен численным интегрированием ядра; far-field для
+    сверхзвуковых суперinclined-панелей не проверялся.
 - Материалы парсятся и дают `Cp`-ratios, но ещё не подключены к AIC/BC
   и к выбору формулы `Cp` по сети/поверхности при постпроцессинге.
 - `AeroModel::solveFlow()` — только независимые source-only/doublet-only
@@ -167,7 +171,8 @@
 
 ### Этап 4. Полный PIC
 
-1. Far-field `ffpic` + необходимые `cf`/`hm`/`hbm`.
+1. Far-field `ffpic` + необходимые `cf`/`hm`/`hbm` — портировано для
+   `nf=6`; осталось кубическое `nf=10` и проверка на сверхзвуке.
 2. `qnfcal` для intermediate/quasi-near.
 3. Supersonic:
    - `supsbi` — готово;
@@ -212,10 +217,17 @@
 - [x] Расширить matching на частичные рёбра.
   Сделаны непрерывные общие под-цепочки точек; произвольные перекрытия
   с интерполяцией остаются в ограничениях.
-- [ ] Портировать `ffpic`.
-  Базис готов: `panmom`/`ccaln` (панельные моменты) портированы и
-  проверены аналитически; остались `ffdqg`/`ffdqgv` и сам `ffpic`.
-- [ ] Портировать `qnfcal`.
+- [x] Портировать `ffpic`.
+  Сделаны `panmom`/`ccaln`, `qcof` (near-plane quadratic),
+  `ffdqgv`-матрицы `hm`/`hbm`, сам `ffpic` для `nf=6` и композиция с
+  панельными сплайнами. Проверено сходимостью far-field к near-field
+  на расстояниях 10/100/1000 диаметров; мультиполь `iflu=3` даёт
+  ошибку ~`8e-6`, `2e-9`, `6e-12`.
+- [ ] Добавить диспетчеризацию PIC по `influenceLevel`
+  (1..3 — far-field, 4/5 — intermediate, 6 — near-field) и тесты на
+  переключение уровней.
+- [ ] Кубический far-field (`nf=10`, cubic terms в `ffpic`/`ffdqg`).
+- [ ] Портировать полный `qnfcal`.
 - [x] Портировать `supsbi` и диспетчеризацию `nftpic` по `iin`
   (supersonic subinclined); сверено с численным интегралом ядра.
 - [x] Портировать `supspi`/`aicsup` (supersonic superinclined).

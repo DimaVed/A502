@@ -168,6 +168,82 @@ Eigen::MatrixXd panelAreaMoments(
     return c;
 }
 
+NearPlaneQuadratic buildNearPlaneQuadratic(
+    const std::array<Eigen::Vector3d, 9>& cp,
+    const Eigen::Matrix3d& innerToLocal) {
+    NearPlaneQuadratic out;
+
+    // qcof(): pc are the bilinear shape vectors of the four corners.
+    Eigen::Matrix<double, 3, 3> pc;
+    for (int l = 0; l < 3; ++l) {
+        pc(l, 0) =
+            0.25 * (cp[0][l] - cp[1][l] - cp[2][l] + cp[3][l]);
+        pc(l, 1) =
+            0.25 * (cp[0][l] + cp[1][l] - cp[2][l] - cp[3][l]);
+        pc(l, 2) =
+            0.25 * (cp[0][l] - cp[1][l] + cp[2][l] - cp[3][l]);
+    }
+    const Eigen::Matrix3d z = innerToLocal * pc;
+
+    const double kses = z(0, 0);
+    const double etas = z(1, 0);
+    const double kset = z(0, 1);
+    const double etat = z(1, 1);
+    const double ksest = z(0, 2);
+    const double etast = z(1, 2);
+
+    const double det = kses * etat - kset * etas;
+    if (std::abs(det) <= kEps)
+        return out;
+    const double al0 = 1.0 / det;
+    const double al0s = al0 * al0;
+    const double deta =
+        al0 * (2.0 * etas * etat * ksest -
+               (etat * kses + etas * kset) * etast);
+    const double dkse =
+        -al0 * (2.0 * kses * kset * etast -
+                (etat * kses + etas * kset) * ksest);
+
+    Eigen::Matrix<double, 6, 6> c =
+        Eigen::Matrix<double, 6, 6>::Zero();
+    c(0, 0) = 1.0;
+    c(1, 1) = al0 * etat;
+    c(1, 2) = -al0 * etas;
+    c(2, 1) = -al0 * kset;
+    c(2, 2) = al0 * kses;
+    c(3, 1) = al0s * etat * (etast + deta);
+    c(3, 2) = al0s * etas * (etast - deta);
+    c(3, 3) = al0s * etat * etat;
+    c(3, 4) = -2.0 * al0s * etas * etat;
+    c(3, 5) = al0s * etas * etas;
+    c(4, 1) = -al0s * (kset * etast + etat * dkse);
+    c(4, 2) = -al0s * (etas * ksest - kses * deta);
+    c(4, 3) = -al0s * kset * etat;
+    c(4, 4) = al0s * (kset * etas + etat * kses);
+    c(4, 5) = -al0s * kses * etas;
+    c(5, 1) = al0s * kset * (ksest + dkse);
+    c(5, 2) = al0s * kses * (ksest - dkse);
+    c(5, 3) = al0s * kset * kset;
+    c(5, 4) = -2.0 * al0s * kses * kset;
+    c(5, 5) = al0s * kses * kses;
+
+    for (int k = 0; k < 6; ++k) {
+        out.coefficients(k, 0) = 0.25 * c(k, 4);
+        out.coefficients(k, 1) = -0.25 * c(k, 4);
+        out.coefficients(k, 2) = 0.25 * c(k, 4);
+        out.coefficients(k, 3) = -0.25 * c(k, 4);
+        out.coefficients(k, 4) = 0.5 * c(k, 2) + c(k, 5);
+        out.coefficients(k, 5) = -0.5 * c(k, 1) + c(k, 3);
+        out.coefficients(k, 6) = -0.5 * c(k, 2) + c(k, 5);
+        out.coefficients(k, 7) = 0.5 * c(k, 1) + c(k, 3);
+        out.coefficients(k, 8) =
+            c(k, 0) - 2.0 * c(k, 3) - 2.0 * c(k, 5);
+    }
+
+    out.valid = true;
+    return out;
+}
+
 NearPlane buildNearPlane(const std::array<Eigen::Vector3d, 4>& c) {
     NearPlane out;
 
