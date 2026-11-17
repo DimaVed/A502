@@ -921,8 +921,48 @@ TEST_CASE("source outer spline: interior panel", "[splines][outer]") {
     CHECK(got(4) ==
           Catch::Approx(f(panel.cp[8].x(), panel.cp[8].y())).epsilon(1e-10));
 
-    // Edge/corner panels are not covered yet.
-    CHECK_FALSE(a502::buildSourceOuterSpline(net, 0, 1).valid);
+    // Edge and corner panels use the clipped 3x3 stencil of sing().
+    const auto edge = a502::buildSourceOuterSpline(net, 0, 1);
+    REQUIRE(edge.valid);
+    int edgeMissing = 0;
+    for (int q = 0; q < 9; ++q)
+        if (edge.neighborPanel[static_cast<std::size_t>(q)] < 0)
+            ++edgeMissing;
+    CHECK(edgeMissing == 3);
+    for (int r = 0; r < 5; ++r)
+        CHECK(edge.coefficients.row(r).sum() ==
+              Catch::Approx(1.0).epsilon(1e-10));
+
+    Eigen::Matrix<double, 9, 1> edgeValues =
+        Eigen::Matrix<double, 9, 1>::Zero();
+    k = 0;
+    for (int dj = -1; dj <= 1; ++dj) {
+        for (int di = -1; di <= 1; ++di) {
+            const int ni = 0 + di;
+            const int nj = 1 + dj;
+            if (ni >= 0 && ni < 3 && nj >= 0 && nj < 3)
+                edgeValues(k) = f(ni + 0.5, nj + 0.5);
+            ++k;
+        }
+    }
+    const auto edgeGeom =
+        a502::buildPanelGeometry(net.coordinates, net.nm, net.nn, 0, 1);
+    const Eigen::Matrix<double, 5, 1> edgeGot = edge.coefficients * edgeValues;
+    for (int r = 0; r < 4; ++r)
+        CHECK(edgeGot(r) ==
+              Catch::Approx(f(edgeGeom.cp[r].x(), edgeGeom.cp[r].y()))
+                  .epsilon(1e-9));
+    CHECK(edgeGot(4) ==
+          Catch::Approx(f(edgeGeom.cp[8].x(), edgeGeom.cp[8].y()))
+              .epsilon(1e-9));
+
+    const auto corner = a502::buildSourceOuterSpline(net, 0, 0);
+    REQUIRE(corner.valid);
+    int cornerMissing = 0;
+    for (int q = 0; q < 9; ++q)
+        if (corner.neighborPanel[static_cast<std::size_t>(q)] < 0)
+            ++cornerMissing;
+    CHECK(cornerMissing == 5);
 }
 
 TEST_CASE("source outer spline: sample interior panel", "[splines][outer]") {

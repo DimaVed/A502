@@ -70,13 +70,29 @@ SourceOuterSpline buildSourceOuterSpline(const Network& network,
         for (int di = -1; di <= 1; ++di) {
             const int ni = panelI + di;
             const int nj = panelJ + dj;
-            if (ni < 0 || ni >= nPanelM || nj < 0 || nj >= nn - 1)
-                return out; // edge/corner: not handled yet
+            if (ni < 0 || ni >= nPanelM || nj < 0 || nj >= nn - 1) {
+                // sing() simply skips parameters outside the panel-center
+                // grid.  Keep a zero-weight row so the 5x9 layout is stable.
+                A(k, 0) = 1.0;
+                A(k, 1) = 0.0;
+                A(k, 2) = 0.0;
+                w(k) = 0.0;
+                out.neighborPanel[static_cast<std::size_t>(k)] = -1;
+                ++k;
+                continue;
+            }
 
             const PanelGeometry neighbor = buildPanelGeometry(
                 network.coordinates, nm, nn, ni, nj);
-            if (neighbor.degenerate)
-                return out;
+            if (neighbor.degenerate) {
+                A(k, 0) = 1.0;
+                A(k, 1) = 0.0;
+                A(k, 2) = 0.0;
+                w(k) = 0.0;
+                out.neighborPanel[static_cast<std::size_t>(k)] = -1;
+                ++k;
+                continue;
+            }
 
             const Eigen::Vector3d projected =
                 projectToNearPlane(neighbor.cp[8]);
