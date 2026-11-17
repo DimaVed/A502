@@ -10,6 +10,7 @@
 #include "AeroModel.h"
 #include "Compressibility.h"
 #include "PanelGeometry.h"
+#include "SubpanelSplines.h"
 
 #include <algorithm>
 #include <cmath>
@@ -472,4 +473,122 @@ TEST_CASE("control points: sample networks", "[controlpoints]") {
         if (cp.network == 4)
             ++bodybCount;
     CHECK(bodybCount > 0);
+}
+
+namespace {
+
+double expectedPanelSource(int cpIndex, const a502::PanelSourceValues& v) {
+    switch (cpIndex) {
+    case 0: return v(0);
+    case 1: return v(1);
+    case 2: return v(2);
+    case 3: return v(3);
+    case 4: return 0.5 * (v(0) + v(1));
+    case 5: return 0.5 * (v(1) + v(2));
+    case 6: return 0.5 * (v(2) + v(3));
+    case 7: return 0.5 * (v(3) + v(0));
+    case 8: return v(4);
+    default: return 0.0;
+    }
+}
+
+double evaluateSourceAtGlobal(const a502::PanelGeometry& g, int s,
+                              const Eigen::Vector3d& p,
+                              const a502::PanelSourceValues& v) {
+    const auto& sp = g.subpanels[static_cast<std::size_t>(s)];
+    const Eigen::Matrix3d& frame =
+        sp.scaledValid ? sp.scaledToLocal : sp.toLocal;
+    const Eigen::Vector3d local = frame * (p - sp.origin);
+    return a502::evaluateSource(
+        a502::buildSourceSubpanelSplines(g)[static_cast<std::size_t>(s)],
+        local.head<2>(), v);
+}
+
+} // namespace
+
+TEST_CASE("source subpanel splines: vertex values and continuity",
+          "[splines][source]") {
+    const std::vector<double> coords = {
+        0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 1.0, 1.0, 0.0};
+    const a502::PanelGeometry g =
+        a502::buildPanelGeometry(coords, 2, 2, 0, 0);
+    REQUIRE_FALSE(g.degenerate);
+
+    a502::PanelSourceValues vals;
+    vals << 1.0, 2.0, 3.0, 4.0, 5.0;
+
+    const auto splines = a502::buildSourceSubpanelSplines(g);
+    for (int s = 0; s < 8; ++s) {
+        INFO("subpanel " << s);
+        REQUIRE(splines[static_cast<std::size_t>(s)].valid);
+        const auto& sp = g.subpanels[static_cast<std::size_t>(s)];
+        for (int k = 0; k < 3; ++k) {
+            const double got =
+                evaluateSourceAtGlobal(g, s, sp.vertex[static_cast<std::size_t>(k)], vals);
+            const double want =
+                expectedPanelSource(sp.cpIndex[static_cast<std::size_t>(k)], vals);
+            CHECK(got == Catch::Approx(want).epsilon(1e-12));
+        }
+    }
+
+    // Shared edge P5-P8 between subpanels 0 and 4 (1 and 5 in A502 numbering).
+    const Eigen::Vector3d p58 = 0.5 * (g.cp[4] + g.cp[7]);
+    CHECK(evaluateSourceAtGlobal(g, 0, p58, vals) ==
+          Catch::Approx(evaluateSourceAtGlobal(g, 4, p58, vals)).epsilon(1e-12));
+
+    // Shared edge P5-P9 between subpanels 4 and 5 (5 and 6 in A502 numbering).
+    const Eigen::Vector3d p59 = 0.5 * (g.cp[4] + g.cp[8]);
+    CHECK(evaluateSourceAtGlobal(g, 4, p59, vals) ==
+          Catch::Approx(evaluateSourceAtGlobal(g, 5, p59, vals)).epsilon(1e-12));
+}
+
+TEST_CASE("source subpanel splines: linear reproduction", "[splines][source]") {
+    const std::vector<double> coords = {
+        0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 1.0, 1.0, 0.0};
+    const a502::PanelGeometry g =
+        a502::buildPanelGeometry(coords, 2, 2, 0, 0);
+    REQUIRE_FALSE(g.degenerate);
+
+    auto f = [](const Eigen::Vector3d& p) {
+        return 1.0 + 2.0 * p.x() + 3.0 * p.y();
+    };
+    a502::PanelSourceValues vals;
+    vals << f(g.cp[0]), f(g.cp[1]), f(g.cp[2]), f(g.cp[3]), f(g.cp[8]);
+
+    for (int s = 0; s < 8; ++s) {
+        const auto& sp = g.subpanels[static_cast<std::size_t>(s)];
+        const Eigen::Vector3d c =
+            (sp.vertex[0] + sp.vertex[1] + sp.vertex[2]) / 3.0;
+        INFO("subpanel " << s);
+        CHECK(evaluateSourceAtGlobal(g, s, c, vals) ==
+              Catch::Approx(f(c)).epsilon(1e-12));
+    }
+}
+
+TEST_CASE("source subpanel splines: sample panel", "[splines][source]") {
+    a502::AeroModel model;
+    model.parse(samplePath("swb.inp").string());
+    REQUIRE(model.solve());
+
+    const auto& panel = model.panels.front().geom;
+    const auto splines = a502::buildSourceSubpanelSplines(panel);
+
+    a502::PanelSourceValues vals;
+    vals << 0.1, -0.2, 0.3, -0.4, 0.5;
+
+    for (int s = 0; s < 8; ++s) {
+        INFO("subpanel " << s);
+        REQUIRE(splines[static_cast<std::size_t>(s)].valid);
+        const auto& sp = panel.subpanels[static_cast<std::size_t>(s)];
+        for (int k = 0; k < 3; ++k) {
+            CHECK(evaluateSourceAtGlobal(panel, s,
+                                         sp.vertex[static_cast<std::size_t>(k)],
+                                         vals) ==
+                  Catch::Approx(expectedPanelSource(
+                      sp.cpIndex[static_cast<std::size_t>(k)], vals))
+                      .epsilon(1e-10));
+        }
+    }
 }

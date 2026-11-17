@@ -129,6 +129,7 @@ PanelGeometry buildPanelGeometry(const std::vector<double>& coordinates,
 
     for (int s = 0; s < 8; ++s) {
         SubpanelGeometry& sp = p.subpanels[s];
+        sp.cpIndex = {tri[s][0], tri[s][1], tri[s][2]};
         sp.vertex[0] = p.cp[tri[s][0]];
         sp.vertex[1] = p.cp[tri[s][1]];
         sp.vertex[2] = p.cp[tri[s][2]];

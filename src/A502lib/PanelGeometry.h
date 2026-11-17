@@ -38,6 +38,7 @@ namespace a502 {
 
 struct SubpanelGeometry {
     std::array<Eigen::Vector3d, 3> vertex{};
+    std::array<int, 3>             cpIndex{}; // canonical panel point indices P1..P9
     Eigen::Vector3d                centroid{Eigen::Vector3d::Zero()};
     Eigen::Vector3d                normal{Eigen::Vector3d::UnitZ()};
     double                         area{0.0};
