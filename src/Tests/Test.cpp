@@ -9,6 +9,7 @@
 
 #include "AeroModel.h"
 #include "Compressibility.h"
+#include "GlobalInfluence.h"
 #include "Influence.h"
 #include "NearField.h"
 #include "NetworkInfluence.h"
@@ -925,6 +926,60 @@ TEST_CASE("network AIC: rows at all control points", "[networkinfluence]") {
 
     CHECK(aic.source.allFinite());
     CHECK(aic.doublet.allFinite());
+}
+
+TEST_CASE("global influence: two networks and column offsets",
+          "[networkinfluence]") {
+    a502::Network net;
+    net.netname = "grid";
+    net.nm = 8;
+    net.nn = 8;
+    for (int n = 0; n < 8; ++n) {
+        for (int m = 0; m < 8; ++m) {
+            net.coordinates.push_back(static_cast<double>(m));
+            net.coordinates.push_back(static_cast<double>(n));
+            net.coordinates.push_back(0.0);
+        }
+    }
+
+    a502::Network shifted = net;
+    shifted.netname = "grid2";
+    for (std::size_t k = 0; k < shifted.coordinates.size(); k += 3)
+        shifted.coordinates[k] += 20.0;
+
+    const std::vector<a502::Network> networks = {net, shifted};
+    const auto layout = a502::buildGlobalSingularityLayout(networks);
+    REQUIRE(layout.network.size() == 2);
+    REQUIRE(layout.totalSource == 98);
+    REQUIRE(layout.totalDoublet == 162);
+    CHECK(layout.sourceOffset[0] == 0);
+    CHECK(layout.sourceOffset[1] == 49);
+    CHECK(layout.doubletOffset[0] == 0);
+    CHECK(layout.doubletOffset[1] == 81);
+
+    const auto flow = a502::Compressibility::fromAngles(0.0, 0.0, 0.0);
+    const Eigen::Vector3d x(3.5, 3.5, 1.0);
+    const auto global =
+        a502::evaluateGlobalNearFieldInfluence(networks, flow, x, layout);
+    REQUIRE(global.valid);
+    REQUIRE(global.source.cols() == 98);
+    REQUIRE(global.doublet.cols() == 162);
+
+    const auto local0 = a502::evaluateNetworkNearFieldInfluence(
+        networks[0], flow, x, layout.network[0]);
+    const auto local1 = a502::evaluateNetworkNearFieldInfluence(
+        networks[1], flow, x, layout.network[1]);
+    REQUIRE(local0.valid);
+    REQUIRE(local1.valid);
+
+    CHECK((global.source.block(0, 0, 4, 49) - local0.source).norm() <
+          1e-12);
+    CHECK((global.source.block(0, 49, 4, 49) - local1.source).norm() <
+          1e-12);
+    CHECK((global.doublet.block(0, 0, 4, 81) - local0.doublet).norm() <
+          1e-12);
+    CHECK((global.doublet.block(0, 81, 4, 81) - local1.doublet).norm() <
+          1e-12);
 }
 
 TEST_CASE("control points: single square network", "[controlpoints]") {
