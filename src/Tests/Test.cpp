@@ -1408,6 +1408,42 @@ TEST_CASE("matching: shared full edge", "[matching]") {
     CHECK(rows.doublet(0, baseB) == Catch::Approx(-1.0).epsilon(1e-14));
 }
 
+TEST_CASE("matching: source-only networks do not match doublets",
+          "[matching]") {
+    auto makeGrid = [](double y0, int kt, const char* name) {
+        a502::Network net;
+        net.netname = name;
+        net.nm = 4;
+        net.nn = 4;
+        net.kt = kt;
+        for (int n = 0; n < 4; ++n) {
+            for (int m = 0; m < 4; ++m) {
+                net.coordinates.push_back(static_cast<double>(m));
+                net.coordinates.push_back(y0 + static_cast<double>(n));
+                net.coordinates.push_back(0.0);
+            }
+        }
+        return net;
+    };
+
+    const std::vector<a502::Network> networks = {
+        makeGrid(0.0, 7, "src"), makeGrid(3.0, 12, "dbl")};
+    const auto edges = a502::buildNetworkEdges(networks);
+    REQUIRE(edges.size() == 8);
+    const auto matches = a502::findFullEdgeMatches(edges, 1e-10);
+    REQUIRE(matches.size() == 1);
+
+    const auto layout =
+        a502::buildGlobalSingularityLayout(networks);
+    const auto rows =
+        a502::buildEdgeDoubletMatchingRows(networks, layout, matches);
+    REQUIRE(rows.valid);
+    CHECK(rows.nRows == 0);
+    CHECK(rows.doublet.rows() == 0);
+    CHECK(rows.doublet.cols() == layout.totalDoublet);
+    CHECK(rows.rhs.size() == 0);
+}
+
 TEST_CASE("global boundary system: active columns and matching rows",
           "[globalsystem]") {
     auto makeGrid = [](double y0, int kt, const char* name) {
@@ -1635,6 +1671,20 @@ TEST_CASE("global system: mixed source-only and doublet-only networks",
 
     Eigen::FullPivLU<Eigen::MatrixXd> lu(system.matrix);
     CHECK(lu.rank() == system.nRows);
+
+    // Adjacent source-only and doublet-only networks share an edge.  The
+    // source-alone edge is excluded from the doublet matching search, so no
+    // matching rows are generated.
+    const std::vector<a502::Network> adjacent = {
+        makeGrid(0.0, 7, "src"), makeGrid(3.0, 12, "dbl")};
+    const auto adjacentLayout =
+        a502::buildGlobalSingularityLayout(adjacent);
+    const auto adjacentSystem = a502::buildGlobalNormalFluxSystem(
+        adjacent, flow, adjacentLayout, 1.0, 1.0, 1e-10);
+    REQUIRE(adjacentSystem.valid);
+    CHECK(adjacentSystem.nMatchingRows == 0);
+    CHECK(adjacentSystem.nBcRows == 18);
+    CHECK(adjacentSystem.nColumns == 34);
 }
 
 TEST_CASE("global system: equilibration and diagnostics", "[globalsystem]") {

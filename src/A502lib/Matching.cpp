@@ -141,6 +141,13 @@ MatchingRows buildEdgeDoubletMatchingRows(
             a.points.size() != b.points.size() || a.points.size() < 2)
             return MatchingRows{};
 
+        // A502 abtecd() removes source-alone networks (ntd = 0) from the
+        // abutment search when xsrcab is set, so their edges never produce
+        // doublet matching equations.
+        if (!layout.network[static_cast<std::size_t>(a.network)].hasDoublet ||
+            !layout.network[static_cast<std::size_t>(b.network)].hasDoublet)
+            continue;
+
         const NetworkDoubletParameters& da =
             layout.network[static_cast<std::size_t>(a.network)].doublet;
         const NetworkDoubletParameters& db =
@@ -191,9 +198,8 @@ MatchingRows buildEdgeDoubletMatchingRows(
             return MatchingRows{};
     }
 
-    if (rows.empty())
-        return out;
-
+    // Matches may all be ineligible (e.g. source-alone networks); this is a
+    // valid empty matching set, not an assembly failure.
     out.nRows = static_cast<int>(rows.size());
     out.doublet = Eigen::MatrixXd::Zero(out.nRows, layout.totalDoublet);
     out.rhs = Eigen::VectorXd::Zero(out.nRows);
