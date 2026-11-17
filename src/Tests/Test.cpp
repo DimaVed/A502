@@ -970,6 +970,20 @@ TEST_CASE("network singularity types follow kt", "[networkinfluence]") {
         a502::buildNetworkSingularityLayout(net);
     CHECK(composite.hasSource);
     CHECK(composite.hasDoublet);
+
+    a502::Network doubletNet = net;
+    doubletNet.kt = 12;
+    a502::Network compositeNet = net;
+    compositeNet.kt = 1;
+    const std::vector<a502::Network> mixed = {doubletNet, compositeNet};
+    const auto global = a502::buildGlobalSingularityLayout(mixed);
+    REQUIRE(global.network.size() == 2);
+    CHECK(global.activeSourceOffset[0] == -1);
+    CHECK(global.activeSourceOffset[1] == 0);
+    CHECK(global.activeDoubletOffset[0] == 0);
+    CHECK(global.activeDoubletOffset[1] == 16);
+    CHECK(global.activeSource == 4);
+    CHECK(global.activeDoublet == 32);
 }
 
 TEST_CASE("global influence: two networks and column offsets",

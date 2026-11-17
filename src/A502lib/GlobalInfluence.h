@@ -24,6 +24,13 @@ struct GlobalSingularityLayout {
     std::vector<int> doubletOffset;
     int totalSource{0};
     int totalDoublet{0};
+    // Columns of the active unknown vector, after dropping singularity
+    // types that are not present for a network (kt mapping).  A value of -1
+    // means that the corresponding type is inactive for that network.
+    std::vector<int> activeSourceOffset;
+    std::vector<int> activeDoubletOffset;
+    int activeSource{0};
+    int activeDoublet{0};
 };
 
 GlobalSingularityLayout buildGlobalSingularityLayout(

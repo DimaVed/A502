@@ -17,6 +17,8 @@ GlobalSingularityLayout buildGlobalSingularityLayout(
     out.network.reserve(networks.size());
     out.sourceOffset.reserve(networks.size());
     out.doubletOffset.reserve(networks.size());
+    out.activeSourceOffset.reserve(networks.size());
+    out.activeDoubletOffset.reserve(networks.size());
 
     for (const Network& net : networks) {
         NetworkSingularityLayout layout =
@@ -28,6 +30,20 @@ GlobalSingularityLayout buildGlobalSingularityLayout(
         out.doubletOffset.push_back(out.totalDoublet);
         out.totalSource += layout.source.count;
         out.totalDoublet += layout.doublet.count;
+
+        if (layout.hasSource) {
+            out.activeSourceOffset.push_back(out.activeSource);
+            out.activeSource += layout.source.count;
+        } else {
+            out.activeSourceOffset.push_back(-1);
+        }
+        if (layout.hasDoublet) {
+            out.activeDoubletOffset.push_back(out.activeDoublet);
+            out.activeDoublet += layout.doublet.count;
+        } else {
+            out.activeDoubletOffset.push_back(-1);
+        }
+
         out.network.push_back(std::move(layout));
     }
 
