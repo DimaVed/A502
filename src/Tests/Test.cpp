@@ -10,6 +10,7 @@
 #include "AeroModel.h"
 #include "Compressibility.h"
 #include "BoundaryConditions.h"
+#include "GlobalBoundarySystem.h"
 #include "GlobalInfluence.h"
 #include "Influence.h"
 #include "Matching.h"
@@ -1311,6 +1312,65 @@ TEST_CASE("matching: shared full edge", "[matching]") {
     const int baseB = 25 + layout.network[1].doublet.edgeMidBase[3];
     CHECK(rows.doublet(0, baseA) == Catch::Approx(1.0).epsilon(1e-14));
     CHECK(rows.doublet(0, baseB) == Catch::Approx(-1.0).epsilon(1e-14));
+}
+
+TEST_CASE("global boundary system: active columns and matching rows",
+          "[globalsystem]") {
+    auto makeGrid = [](double y0, int kt, const char* name) {
+        a502::Network net;
+        net.netname = name;
+        net.nm = 4;
+        net.nn = 4;
+        net.kt = kt;
+        for (int n = 0; n < 4; ++n) {
+            for (int m = 0; m < 4; ++m) {
+                net.coordinates.push_back(static_cast<double>(m));
+                net.coordinates.push_back(y0 + static_cast<double>(n));
+                net.coordinates.push_back(0.0);
+            }
+        }
+        return net;
+    };
+
+    const auto flow = a502::Compressibility::fromAngles(0.6, 0.0, 0.0);
+    const std::vector<a502::Network> networks = {
+        makeGrid(0.0, 1, "a"), makeGrid(3.0, 1, "b")};
+    const auto layout = a502::buildGlobalSingularityLayout(networks);
+    REQUIRE(layout.activeSource == 18);
+    REQUIRE(layout.activeDoublet == 50);
+
+    const auto system = a502::buildGlobalNormalFluxSystem(
+        networks, flow, layout, 1.0, 1.0, 1e-10);
+    REQUIRE(system.valid);
+    CHECK(system.nBcRows == 18);
+    CHECK(system.nMatchingRows == 5);
+    CHECK(system.nRows == 23);
+    CHECK(system.nActiveSource == 18);
+    CHECK(system.nActiveDoublet == 50);
+    CHECK(system.nColumns == 68);
+    REQUIRE(system.matrix.rows() == 23);
+    REQUIRE(system.matrix.cols() == 68);
+    REQUIRE(system.rhs.size() == 23);
+    CHECK(system.matrix.allFinite());
+    CHECK(system.rhs.allFinite());
+
+    Eigen::FullPivLU<Eigen::MatrixXd> lu(system.matrix);
+    CHECK(lu.rank() == system.nRows);
+
+    const std::vector<a502::Network> doubletOnly = {
+        makeGrid(0.0, 12, "d")};
+    const auto doubletLayout =
+        a502::buildGlobalSingularityLayout(doubletOnly);
+    CHECK(doubletLayout.activeSource == 0);
+    CHECK(doubletLayout.activeDoublet == 25);
+    const auto doubletSystem = a502::buildGlobalNormalFluxSystem(
+        doubletOnly, flow, doubletLayout, 1.0, 1.0, 1e-10);
+    REQUIRE(doubletSystem.valid);
+    CHECK(doubletSystem.nBcRows == 9);
+    CHECK(doubletSystem.nMatchingRows == 0);
+    CHECK(doubletSystem.nColumns == 25);
+    REQUIRE(doubletSystem.matrix.rows() == 9);
+    REQUIRE(doubletSystem.matrix.cols() == 25);
 }
 
 TEST_CASE("control points: single square network", "[controlpoints]") {
