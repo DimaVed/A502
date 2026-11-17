@@ -17,7 +17,7 @@ namespace a502 {
 GlobalBoundarySystem buildGlobalNormalFluxSystem(
     const std::vector<Network>& networks, const Compressibility& flow,
     const GlobalSingularityLayout& layout, double cu, double cl,
-    double matchingTolerance) {
+    double matchingTolerance, bool includeEdgeAndCorner) {
     GlobalBoundarySystem out;
     if (networks.empty() || layout.network.size() != networks.size())
         return out;
@@ -32,7 +32,8 @@ GlobalBoundarySystem buildGlobalNormalFluxSystem(
             buildNetworkControlPoints(net);
 
         for (const ControlPoint& cp : controlPoints) {
-            if (cp.kind != ControlPointKind::PanelCenter)
+            if (!includeEdgeAndCorner &&
+                cp.kind != ControlPointKind::PanelCenter)
                 continue;
 
             const GlobalInfluence global =
@@ -134,6 +135,34 @@ GlobalBoundarySystem buildGlobalNormalFluxSystem(
         }
     }
 
+    out.valid = true;
+    return out;
+}
+
+GlobalSystemSolution solveGlobalBoundarySystem(
+    const GlobalBoundarySystem& system) {
+    GlobalSystemSolution out;
+    if (!system.valid || system.matrix.rows() == 0 ||
+        system.matrix.rows() != system.matrix.cols() ||
+        system.rhs.size() != system.matrix.rows())
+        return out;
+
+    Eigen::FullPivLU<Eigen::MatrixXd> lu(system.matrix);
+    if (!lu.isInvertible())
+        return out;
+
+    out.unknowns = lu.solve(system.rhs);
+    // A couple of iterative-refinement steps keep the residual small for
+    // the near-surface near-field matrices.
+    for (int it = 0; it < 3; ++it) {
+        const Eigen::VectorXd residual =
+            system.rhs - system.matrix * out.unknowns;
+        if (residual.norm() <= 1.0e-13 * system.rhs.norm())
+            break;
+        out.unknowns += lu.solve(residual);
+    }
+    out.residualNorm =
+        (system.matrix * out.unknowns - system.rhs).norm();
     out.valid = true;
     return out;
 }

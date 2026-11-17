@@ -35,6 +35,17 @@ struct GlobalBoundarySystem {
 GlobalBoundarySystem buildGlobalNormalFluxSystem(
     const std::vector<Network>& networks, const Compressibility& flow,
     const GlobalSingularityLayout& layout, double cu, double cl,
-    double matchingTolerance);
+    double matchingTolerance, bool includeEdgeAndCorner = false);
+
+struct GlobalSystemSolution {
+    Eigen::VectorXd unknowns; // active source block, then active doublet
+    double residualNorm{0.0};
+    bool valid{false};
+};
+
+// Direct solve for a square system.  Under/over-determined systems are left
+// for the later network-matching/unknown-elimination stage.
+GlobalSystemSolution solveGlobalBoundarySystem(
+    const GlobalBoundarySystem& system);
 
 } // namespace a502

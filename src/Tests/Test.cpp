@@ -1371,6 +1371,51 @@ TEST_CASE("global boundary system: active columns and matching rows",
     CHECK(doubletSystem.nColumns == 25);
     REQUIRE(doubletSystem.matrix.rows() == 9);
     REQUIRE(doubletSystem.matrix.cols() == 25);
+
+    const auto allPoints = a502::buildGlobalNormalFluxSystem(
+        doubletOnly, flow, doubletLayout, 1.0, 1.0, 1e-10, true);
+    REQUIRE(allPoints.valid);
+    CHECK(allPoints.nBcRows == 25);
+    CHECK(allPoints.nRows == 25);
+    CHECK(allPoints.nColumns == 25);
+    Eigen::FullPivLU<Eigen::MatrixXd> allLu(allPoints.matrix);
+    CHECK(allLu.rank() == 25);
+
+    const auto flowAlpha =
+        a502::Compressibility::fromAngles(0.6, 5.0, 0.0);
+    const auto solveSystem = a502::buildGlobalNormalFluxSystem(
+        doubletOnly, flowAlpha, doubletLayout, 1.0, 1.0, 1e-10, true);
+    REQUIRE(solveSystem.valid);
+    const auto solution =
+        a502::solveGlobalBoundarySystem(solveSystem);
+    REQUIRE(solution.valid);
+    CHECK(solution.unknowns.size() == 25);
+    CHECK(solution.unknowns.allFinite());
+    CHECK(solution.unknowns.norm() > 1e-6);
+    CHECK(solution.residualNorm < 1e-3);
+
+    // Solver sanity check with an exactly solvable system.
+    a502::GlobalBoundarySystem exact;
+    exact.nRows = 3;
+    exact.nColumns = 3;
+    exact.nActiveSource = 3;
+    exact.nActiveDoublet = 0;
+    exact.matrix.resize(3, 3);
+    exact.matrix << 2.0, 1.0, 0.0,
+                    1.0, 3.0, 1.0,
+                    0.0, 1.0, 2.0;
+    Eigen::VectorXd wanted(3);
+    wanted << 1.0, -2.0, 3.0;
+    exact.rhs = exact.matrix * wanted;
+    exact.valid = true;
+    const auto exactSolution =
+        a502::solveGlobalBoundarySystem(exact);
+    REQUIRE(exactSolution.valid);
+    CHECK((exactSolution.unknowns - wanted).norm() < 1e-12);
+    CHECK(exactSolution.residualNorm < 1e-12);
+
+    // The under-determined composite system is not solved directly.
+    CHECK_FALSE(a502::solveGlobalBoundarySystem(system).valid);
 }
 
 TEST_CASE("control points: single square network", "[controlpoints]") {
