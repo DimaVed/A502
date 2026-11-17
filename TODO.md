@@ -32,6 +32,7 @@
 - Глобальная система:
   - сборка normal-flux BC + matching;
   - выбор активных source/doublet-колонок;
+  - row/column equilibration, rank/conditioning-диагностика;
   - прямой LU-solve с iterative refinement;
   - восстановление полного вектора параметров.
 - Постпроцессинг:
@@ -152,7 +153,7 @@
   `evaluateNetworkNearFieldInfluence()`,
   `buildPanelPointLocalTerms()`, `buildGlobalNearFieldAic()`.
 - [x] Добавить тесты для `kt=7`, `kt=12` и смешанной системы.
-- [ ] Добавить row/column scaling и rank/residual-диагностику в
+- [x] Добавить row/column scaling и rank/residual-диагностику в
   `GlobalBoundarySystem`.
 - [ ] Определить и реализовать gauge/regularization для doublet-only.
 - [ ] Провести аудит числа уравнений/неизвестных для composite-сетей.

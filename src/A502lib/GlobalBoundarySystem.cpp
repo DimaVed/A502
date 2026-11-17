@@ -10,9 +10,22 @@
 #include "Matching.h"
 #include "NetworkInfluence.h"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace a502 {
+
+namespace {
+
+bool isUsableGlobalSystem(const GlobalBoundarySystem& system) {
+    return system.valid && system.matrix.rows() > 0 &&
+           system.matrix.cols() > 0 &&
+           system.rhs.size() == system.matrix.rows() &&
+           system.matrix.allFinite() && system.rhs.allFinite();
+}
+
+} // namespace
 
 GlobalBoundarySystem buildGlobalNormalFluxSystem(
     const std::vector<Network>& networks, const Compressibility& flow,
@@ -140,30 +153,135 @@ GlobalBoundarySystem buildGlobalNormalFluxSystem(
     return out;
 }
 
+GlobalSystemScaling buildGlobalSystemScaling(
+    const GlobalBoundarySystem& system, double tolerance) {
+    GlobalSystemScaling out;
+    if (!isUsableGlobalSystem(system))
+        return out;
+
+    const Eigen::Index rows = system.matrix.rows();
+    const Eigen::Index cols = system.matrix.cols();
+    out.row = Eigen::VectorXd::Ones(rows);
+    out.column = Eigen::VectorXd::Ones(cols);
+
+    const double tol = std::max(tolerance, 0.0);
+    const double maxAbs = system.matrix.cwiseAbs().maxCoeff();
+    const double threshold = maxAbs > 0.0 ? tol * maxAbs : 0.0;
+
+    const Eigen::VectorXd rowMax =
+        system.matrix.cwiseAbs().rowwise().maxCoeff();
+    for (Eigen::Index i = 0; i < rows; ++i) {
+        if (rowMax(i) > threshold)
+            out.row(i) = 1.0 / rowMax(i);
+    }
+
+    const Eigen::MatrixXd rowScaled =
+        out.row.asDiagonal() * system.matrix;
+    const double scaledMax = rowScaled.cwiseAbs().maxCoeff();
+    const double columnThreshold =
+        scaledMax > 0.0 ? tol * scaledMax : 0.0;
+    const Eigen::VectorXd columnMax =
+        rowScaled.cwiseAbs().colwise().maxCoeff();
+    for (Eigen::Index j = 0; j < cols; ++j) {
+        if (columnMax(j) > columnThreshold)
+            out.column(j) = 1.0 / columnMax(j);
+    }
+
+    out.valid = true;
+    return out;
+}
+
+GlobalSystemDiagnostics analyzeGlobalBoundarySystem(
+    const GlobalBoundarySystem& system, double tolerance) {
+    GlobalSystemDiagnostics out;
+    if (!isUsableGlobalSystem(system))
+        return out;
+
+    out.nRows = static_cast<int>(system.matrix.rows());
+    out.nColumns = static_cast<int>(system.matrix.cols());
+    out.maxAbs = system.matrix.cwiseAbs().maxCoeff();
+
+    const double tol = std::max(tolerance, 0.0);
+    const double threshold = out.maxAbs > 0.0 ? tol * out.maxAbs : 0.0;
+
+    const Eigen::VectorXd rowMax =
+        system.matrix.cwiseAbs().rowwise().maxCoeff();
+    const Eigen::VectorXd columnMax =
+        system.matrix.cwiseAbs().colwise().maxCoeff();
+    for (Eigen::Index i = 0; i < rowMax.size(); ++i)
+        if (rowMax(i) <= threshold)
+            ++out.zeroRows;
+    for (Eigen::Index j = 0; j < columnMax.size(); ++j)
+        if (columnMax(j) <= threshold)
+            ++out.zeroColumns;
+
+    const Eigen::JacobiSVD<Eigen::MatrixXd> svd(system.matrix);
+    const Eigen::VectorXd values = svd.singularValues();
+    if (values.size() == 0 || !(values(0) > 0.0)) {
+        out.dependentRows = out.nRows;
+        out.conditionNumber = std::numeric_limits<double>::infinity();
+        out.valid = true;
+        return out;
+    }
+
+    const double rankThreshold = tol * values(0);
+    for (Eigen::Index k = 0; k < values.size(); ++k)
+        if (values(k) > rankThreshold)
+            ++out.rank;
+    out.dependentRows = std::max(0, out.nRows - out.rank);
+
+    const Eigen::Index minDimension =
+        std::min(system.matrix.rows(), system.matrix.cols());
+    if (out.rank == minDimension && values(minDimension - 1) > 0.0)
+        out.conditionNumber = values(0) / values(minDimension - 1);
+    else
+        out.conditionNumber = std::numeric_limits<double>::infinity();
+
+    out.valid = true;
+    return out;
+}
+
 GlobalSystemSolution solveGlobalBoundarySystem(
     const GlobalBoundarySystem& system) {
     GlobalSystemSolution out;
-    if (!system.valid || system.matrix.rows() == 0 ||
-        system.matrix.rows() != system.matrix.cols() ||
-        system.rhs.size() != system.matrix.rows())
+    if (!isUsableGlobalSystem(system) ||
+        system.matrix.rows() != system.matrix.cols())
         return out;
 
-    Eigen::FullPivLU<Eigen::MatrixXd> lu(system.matrix);
+    const GlobalSystemScaling scaling =
+        buildGlobalSystemScaling(system);
+    if (!scaling.valid)
+        return out;
+
+    const Eigen::MatrixXd scaledMatrix =
+        scaling.row.asDiagonal() * system.matrix *
+        scaling.column.asDiagonal();
+    const Eigen::VectorXd scaledRhs =
+        scaling.row.asDiagonal() * system.rhs;
+
+    Eigen::FullPivLU<Eigen::MatrixXd> lu(scaledMatrix);
     if (!lu.isInvertible())
         return out;
+    out.rank = static_cast<int>(lu.rank());
 
-    out.unknowns = lu.solve(system.rhs);
-    // A couple of iterative-refinement steps keep the residual small for
-    // the near-surface near-field matrices.
+    // Iterative refinement is done entirely in the equilibrated system:
+    // forming the residual in the original units and mapping the correction
+    // back through large column scales would amplify round-off.
+    Eigen::VectorXd scaledUnknowns = lu.solve(scaledRhs);
     for (int it = 0; it < 3; ++it) {
         const Eigen::VectorXd residual =
-            system.rhs - system.matrix * out.unknowns;
-        if (residual.norm() <= 1.0e-13 * system.rhs.norm())
+            scaledRhs - scaledMatrix * scaledUnknowns;
+        if (residual.norm() <= 1.0e-13 * scaledRhs.norm())
             break;
-        out.unknowns += lu.solve(residual);
+        scaledUnknowns += lu.solve(residual);
     }
+
+    out.unknowns =
+        scaling.column.asDiagonal() * scaledUnknowns;
     out.residualNorm =
         (system.matrix * out.unknowns - system.rhs).norm();
+    out.scaledResidualNorm =
+        (scaledMatrix * scaledUnknowns - scaledRhs).norm();
     out.valid = true;
     return out;
 }

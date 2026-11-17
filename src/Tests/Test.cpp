@@ -1451,6 +1451,17 @@ TEST_CASE("global boundary system: active columns and matching rows",
     Eigen::FullPivLU<Eigen::MatrixXd> lu(system.matrix);
     CHECK(lu.rank() == system.nRows);
 
+    const auto systemDiagnostics =
+        a502::analyzeGlobalBoundarySystem(system);
+    REQUIRE(systemDiagnostics.valid);
+    CHECK(systemDiagnostics.rank == system.nRows);
+    CHECK(systemDiagnostics.dependentRows == 0);
+    CHECK(systemDiagnostics.zeroRows == 0);
+    // With panel-centre rows only, some doublet parameters (mostly edge and
+    // corner values) are still untouched by the assembled equations.
+    CHECK(systemDiagnostics.zeroColumns > 0);
+    CHECK(std::isfinite(systemDiagnostics.conditionNumber));
+
     const std::vector<a502::Network> doubletOnly = {
         makeGrid(0.0, 12, "d")};
     const auto doubletLayout =
@@ -1541,8 +1552,10 @@ TEST_CASE("global boundary system: active columns and matching rows",
     const auto exactSolution =
         a502::solveGlobalBoundarySystem(exact);
     REQUIRE(exactSolution.valid);
+    CHECK(exactSolution.rank == 3);
     CHECK((exactSolution.unknowns - wanted).norm() < 1e-12);
     CHECK(exactSolution.residualNorm < 1e-12);
+    CHECK(exactSolution.scaledResidualNorm < 1e-12);
 
     // The under-determined composite system is not solved directly.
     CHECK_FALSE(a502::solveGlobalBoundarySystem(system).valid);
@@ -1622,6 +1635,92 @@ TEST_CASE("global system: mixed source-only and doublet-only networks",
 
     Eigen::FullPivLU<Eigen::MatrixXd> lu(system.matrix);
     CHECK(lu.rank() == system.nRows);
+}
+
+TEST_CASE("global system: equilibration and diagnostics", "[globalsystem]") {
+    a502::GlobalBoundarySystem scaled;
+    scaled.nRows = 3;
+    scaled.nColumns = 3;
+    scaled.nActiveSource = 3;
+    scaled.nActiveDoublet = 0;
+    scaled.matrix.resize(3, 3);
+    scaled.matrix << 1.0e3, 1.0e3, 1.0e-3,
+                     1.0e3, -1.0e3, 2.0e-3,
+                     1.0e3, 0.0, 3.0e-3;
+    Eigen::VectorXd wanted(3);
+    wanted << 1.0, -2.0, 3.0;
+    scaled.rhs = scaled.matrix * wanted;
+    scaled.valid = true;
+
+    const auto scaling =
+        a502::buildGlobalSystemScaling(scaled);
+    REQUIRE(scaling.valid);
+    REQUIRE(scaling.row.size() == 3);
+    REQUIRE(scaling.column.size() == 3);
+    for (int i = 0; i < 3; ++i)
+        CHECK(scaling.row(i) == Catch::Approx(1.0e-3).epsilon(1e-12));
+    CHECK(scaling.column(0) == Catch::Approx(1.0).epsilon(1e-12));
+    CHECK(scaling.column(1) == Catch::Approx(1.0).epsilon(1e-12));
+    CHECK(scaling.column(2) ==
+          Catch::Approx(1.0 / 3.0e-6).epsilon(1e-12));
+
+    const auto solution =
+        a502::solveGlobalBoundarySystem(scaled);
+    REQUIRE(solution.valid);
+    CHECK(solution.rank == 3);
+    CHECK((solution.unknowns - wanted).norm() < 1.0e-8);
+    CHECK(solution.residualNorm < 1.0e-8);
+    CHECK(solution.scaledResidualNorm <= solution.residualNorm);
+
+    const auto diagnostics =
+        a502::analyzeGlobalBoundarySystem(scaled);
+    REQUIRE(diagnostics.valid);
+    CHECK(diagnostics.nRows == 3);
+    CHECK(diagnostics.nColumns == 3);
+    CHECK(diagnostics.rank == 3);
+    CHECK(diagnostics.dependentRows == 0);
+    CHECK(diagnostics.zeroRows == 0);
+    CHECK(diagnostics.zeroColumns == 0);
+    CHECK(diagnostics.maxAbs == 1.0e3);
+    CHECK(std::isfinite(diagnostics.conditionNumber));
+    CHECK(diagnostics.conditionNumber > 1.0);
+
+    // A dependent row and an all-zero row are reported, and the matrix is
+    // recognized as rank deficient.
+    a502::GlobalBoundarySystem deficient;
+    deficient.nRows = 4;
+    deficient.nColumns = 3;
+    deficient.nActiveSource = 3;
+    deficient.nActiveDoublet = 0;
+    deficient.matrix.resize(4, 3);
+    deficient.matrix << 1.0, 2.0, 0.0,
+                        2.0, 4.0, 0.0,
+                        0.0, 0.0, 1.0,
+                        0.0, 0.0, 0.0;
+    deficient.rhs = Eigen::VectorXd::Zero(4);
+    deficient.valid = true;
+
+    const auto deficientDiagnostics =
+        a502::analyzeGlobalBoundarySystem(deficient);
+    REQUIRE(deficientDiagnostics.valid);
+    CHECK(deficientDiagnostics.rank == 2);
+    CHECK(deficientDiagnostics.dependentRows == 2);
+    CHECK(deficientDiagnostics.zeroRows == 1);
+    CHECK(deficientDiagnostics.zeroColumns == 0);
+    CHECK(std::isinf(deficientDiagnostics.conditionNumber));
+
+    const auto deficientScaling =
+        a502::buildGlobalSystemScaling(deficient);
+    REQUIRE(deficientScaling.valid);
+    CHECK(deficientScaling.row(3) == 1.0);
+    CHECK(deficientScaling.row(0) == Catch::Approx(0.5).epsilon(1e-14));
+    CHECK(deficientScaling.row(1) == Catch::Approx(0.25).epsilon(1e-14));
+    CHECK_FALSE(a502::solveGlobalBoundarySystem(deficient).valid);
+
+    a502::GlobalBoundarySystem empty;
+    CHECK_FALSE(a502::buildGlobalSystemScaling(empty).valid);
+    CHECK_FALSE(a502::analyzeGlobalBoundarySystem(empty).valid);
+    CHECK_FALSE(a502::solveGlobalBoundarySystem(empty).valid);
 }
 
 TEST_CASE("control points: single square network", "[controlpoints]") {
