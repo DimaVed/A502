@@ -1089,7 +1089,7 @@ TEST_CASE("boundary condition rows: nct=1 and nct=4",
     double localDoubletValue = 0.0;
     for (std::size_t k = 0; k < local.doubletId.size(); ++k)
         localDoubletValue +=
-            local.doubletValue(static_cast<Eigen::Index>(k)) *
+            local.doubletValue(0, static_cast<Eigen::Index>(k)) *
             doubletValues(local.doubletId[k]);
 
     const double got4 = row4.source.dot(sourceValues) +
@@ -1098,8 +1098,52 @@ TEST_CASE("boundary condition rows: nct=1 and nct=4",
         da * potential + dd * localDoubletValue;
     CHECK(got4 == Catch::Approx(want4).epsilon(1e-10));
 
+    // nct=2 reduces to nct=1 when cu == cl and the general/potential
+    // coefficients vanish (td = 0).
+    a502::BoundaryConditionCoefficients bc1eq;
+    bc1eq.nct = 1;
+    bc1eq.cu = 1.0;
+    bc1eq.cl = 1.0;
+    bc1eq.bet = 0.25;
+    const auto row1eq = a502::buildBoundaryRow(
+        influence, panel.normal, flow, bc1eq, local);
+    REQUIRE(row1eq.valid);
+
+    a502::BoundaryConditionCoefficients bc2eq;
+    bc2eq.nct = 2;
+    bc2eq.cu = 1.0;
+    bc2eq.cl = 1.0;
+    bc2eq.bet = 0.25;
+    const auto row2eq = a502::buildBoundaryRow(
+        influence, panel.normal, flow, bc2eq, local);
+    REQUIRE(row2eq.valid);
+    CHECK((row2eq.source - row1eq.source).norm() < 1e-10);
+    CHECK((row2eq.doublet - row1eq.doublet).norm() < 1e-10);
+    CHECK(row2eq.rhs == Catch::Approx(0.25).epsilon(1e-14));
+
+    // nct=2 reduces to nct=4 when only the potential part is present.
+    a502::BoundaryConditionCoefficients bc4eq;
+    bc4eq.nct = 4;
+    bc4eq.du = 1.0;
+    bc4eq.dl = 1.0;
+    bc4eq.bet = -0.1;
+    const auto row4eq = a502::buildBoundaryRow(
+        influence, panel.normal, flow, bc4eq, local);
+    REQUIRE(row4eq.valid);
+
+    a502::BoundaryConditionCoefficients bc2pot;
+    bc2pot.nct = 2;
+    bc2pot.du = 1.0;
+    bc2pot.dl = 1.0;
+    bc2pot.bet = -0.1;
+    const auto row2pot = a502::buildBoundaryRow(
+        influence, panel.normal, flow, bc2pot, local);
+    REQUIRE(row2pot.valid);
+    CHECK((row2pot.source - row4eq.source).norm() < 1e-10);
+    CHECK((row2pot.doublet - row4eq.doublet).norm() < 1e-10);
+
     a502::BoundaryConditionCoefficients bad;
-    bad.nct = 2;
+    bad.nct = 3;
     CHECK_FALSE(a502::buildBoundaryRow(
                     influence, panel.normal, flow, bad, local)
                     .valid);

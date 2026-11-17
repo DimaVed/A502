@@ -6,6 +6,8 @@
 
 #include "AeroModel.h"
 #include "OuterSplines.h"
+#include "PanelGeometry.h"
+#include "SubpanelSplines.h"
 
 #include <cmath>
 
@@ -56,13 +58,56 @@ LocalSingularityTerms buildPanelCenterLocalTerms(
     if (!doublet.valid)
         return LocalSingularityTerms{};
 
-    const DoubletRow& centerRow = doublet.rows[8];
-    out.doubletId = centerRow.index;
-    out.doubletValue.resize(
-        static_cast<Eigen::Index>(centerRow.coefficient.size()));
-    for (std::size_t k = 0; k < centerRow.coefficient.size(); ++k)
-        out.doubletValue(static_cast<Eigen::Index>(k)) =
-            centerRow.coefficient[k];
+    PanelGeometry panel = buildPanelGeometry(
+        network.coordinates, network.nm, network.nn, panelI, panelJ);
+    if (panel.degenerate)
+        return LocalSingularityTerms{};
+    applyCompressibleFrames(panel, flow);
+
+    const auto doubletSubpanels = buildDoubletSubpanelSplines(panel, flow);
+    const DoubletSubpanelSpline& inner = doubletSubpanels[4];
+    if (!inner.valid)
+        return LocalSingularityTerms{};
+    const SubpanelGeometry& sp = panel.subpanels[4];
+    const Eigen::Matrix3d toGlobal =
+        sp.scaledValid ? sp.scaledToGlobal : sp.toGlobal;
+
+    // Gradient of mu at P9 with respect to the nine canonical values.
+    Eigen::Matrix<double, 3, 9> canonicalGradient;
+    for (int j = 0; j < 9; ++j) {
+        canonicalGradient.col(j) =
+            toGlobal * Eigen::Vector3d(inner.coefficients(1, j),
+                                       inner.coefficients(2, j), 0.0);
+    }
+
+    // Collect all local doublet parameter ids referenced by any row.
+    auto findOrAdd = [&](int id) -> int {
+        for (std::size_t k = 0; k < out.doubletId.size(); ++k) {
+            if (out.doubletId[k] == id)
+                return static_cast<int>(k);
+        }
+        out.doubletId.push_back(id);
+        return static_cast<int>(out.doubletId.size() - 1);
+    };
+    for (int row = 0; row < 9; ++row) {
+        for (int id : doublet.rows[static_cast<std::size_t>(row)].index)
+            findOrAdd(id);
+    }
+
+    out.doubletValue = Eigen::Matrix<double, 4, Eigen::Dynamic>::Zero(
+        4, static_cast<Eigen::Index>(out.doubletId.size()));
+    for (int row = 0; row < 9; ++row) {
+        const DoubletRow& sourceRow =
+            doublet.rows[static_cast<std::size_t>(row)];
+        for (std::size_t k = 0; k < sourceRow.index.size(); ++k) {
+            const int col = findOrAdd(sourceRow.index[k]);
+            const double c = sourceRow.coefficient[k];
+            out.doubletValue.col(col).segment<3>(1) +=
+                c * canonicalGradient.col(row);
+            if (row == 8)
+                out.doubletValue(0, col) += c;
+        }
+    }
 
     out.valid = true;
     return out;
@@ -76,7 +121,8 @@ BoundaryRow buildBoundaryRow(
     BoundaryRow out;
     if (!influence.valid || !local.valid)
         return out;
-    if (coefficients.nct != 1 && coefficients.nct != 4)
+    if (coefficients.nct != 1 && coefficients.nct != 2 &&
+        coefficients.nct != 4)
         return out;
 
     const double nnorm = normal.norm();
@@ -116,7 +162,7 @@ BoundaryRow buildBoundaryRow(
             out.source(id) +=
                 cd * local.sourceValue(static_cast<Eigen::Index>(k));
         }
-    } else {
+    } else if (coefficients.nct == 4) {
         const double da = coefficients.du + coefficients.dl;
         const double dd = 0.5 * (coefficients.du - coefficients.dl);
 
@@ -128,7 +174,69 @@ BoundaryRow buildBoundaryRow(
             if (id < 0 || id >= nDoublet)
                 return BoundaryRow{};
             out.doublet(id) +=
-                dd * local.doubletValue(static_cast<Eigen::Index>(k));
+                dd * local.doubletValue(0, static_cast<Eigen::Index>(k));
+        }
+    } else {
+        // General (nct=2) coefficients: aical's ta/td projection.
+        const double ca = coefficients.cu + coefficients.cl;
+        const double cd = 0.5 * (coefficients.cu - coefficients.cl);
+        const double da = coefficients.du + coefficients.dl;
+        const double dd = 0.5 * (coefficients.du - coefficients.dl);
+        const Eigen::Vector3d tn =
+            compressibilityScale(flow.betams, flow.compd, n);
+
+        auto projectTangential =
+            [&](const Eigen::Vector3d& v) -> Eigen::Vector3d {
+            const double v2 = v.squaredNorm();
+            const double vn = v.dot(n);
+            if (v2 > vn * vn + 1.0e-30)
+                return std::sqrt(1.0 / (1.0 - vn * vn / v2)) *
+                       (v - vn * n);
+            return Eigen::Vector3d::Zero();
+        };
+
+        const Eigen::Vector3d ta =
+            projectTangential(coefficients.tu + coefficients.tl) +
+            ca * tn;
+        const Eigen::Vector3d td =
+            projectTangential(0.5 * (coefficients.tu - coefficients.tl)) +
+            cd * tn;
+
+        for (Eigen::Index j = 0; j < nSource; ++j) {
+            out.source(j) =
+                da * influence.source(0, j) +
+                ta.x() * influence.source(1, j) +
+                ta.y() * influence.source(2, j) +
+                ta.z() * influence.source(3, j);
+        }
+        for (Eigen::Index j = 0; j < nDoublet; ++j) {
+            out.doublet(j) =
+                da * influence.doublet(0, j) +
+                ta.x() * influence.doublet(1, j) +
+                ta.y() * influence.doublet(2, j) +
+                ta.z() * influence.doublet(3, j);
+        }
+
+        const double factor = tn.dot(n);
+        if (std::abs(factor) <= 1.0e-14)
+            return BoundaryRow{};
+        const double sourceFactor = td.dot(n) / factor;
+        for (std::size_t k = 0; k < local.sourceId.size(); ++k) {
+            const int id = local.sourceId[k];
+            if (id < 0 || id >= nSource)
+                return BoundaryRow{};
+            out.source(id) +=
+                sourceFactor * local.sourceValue(static_cast<Eigen::Index>(k));
+        }
+
+        for (std::size_t k = 0; k < local.doubletId.size(); ++k) {
+            const int id = local.doubletId[k];
+            if (id < 0 || id >= nDoublet)
+                return BoundaryRow{};
+            const Eigen::Index kk = static_cast<Eigen::Index>(k);
+            out.doublet(id) +=
+                dd * local.doubletValue(0, kk) +
+                td.dot(local.doubletValue.col(kk).segment<3>(1));
         }
     }
 
