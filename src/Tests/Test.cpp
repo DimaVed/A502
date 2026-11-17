@@ -1065,6 +1065,308 @@ TEST_CASE("doublet outer spline: sample deep interior panel",
         CHECK(constant(r) == Catch::Approx(1.0).epsilon(1e-8));
 }
 
+TEST_CASE("doublet network parameters: staggered parameter grid",
+          "[splines][outer]") {
+    a502::Network net;
+    net.netname = "grid";
+    net.nm = 8;
+    net.nn = 8;
+    for (int n = 0; n < 8; ++n) {
+        for (int m = 0; m < 8; ++m) {
+            net.coordinates.push_back(static_cast<double>(m));
+            net.coordinates.push_back(static_cast<double>(n));
+            net.coordinates.push_back(0.0);
+        }
+    }
+
+    const auto parameters = a502::buildNetworkDoubletParameters(net);
+    REQUIRE(parameters.nPanelM == 7);
+    REQUIRE(parameters.nPanelN == 7);
+    REQUIRE(parameters.nCenters == 49);
+    // (nm+1)*(nn+1) = 81 parameters: 49 centres, 4 corners, 28 edge points.
+    REQUIRE(parameters.count == 81);
+    REQUIRE(parameters.location.size() == 81);
+
+    CHECK(parameters.cornerId[0] == 49);
+    CHECK(parameters.cornerId[1] == 50);
+    CHECK(parameters.cornerId[2] == 51);
+    CHECK(parameters.cornerId[3] == 52);
+    CHECK(parameters.edgeMidBase[0] == 53); // top row
+    CHECK(parameters.edgeMidBase[1] == 60); // right column
+    CHECK(parameters.edgeMidBase[2] == 67); // bottom row
+    CHECK(parameters.edgeMidBase[3] == 74); // left column
+
+    // Parameter-grid mapping: 1-based (m,n) in (nm+1)x(nn+1).
+    CHECK(parameters.parameterId(2, 2) == parameters.centerId(0, 0));
+    CHECK(parameters.parameterId(8, 8) == parameters.centerId(6, 6));
+    CHECK(parameters.parameterId(1, 1) == parameters.cornerId[0]);
+    CHECK(parameters.parameterId(1, 9) == parameters.cornerId[1]);
+    CHECK(parameters.parameterId(9, 9) == parameters.cornerId[2]);
+    CHECK(parameters.parameterId(9, 1) == parameters.cornerId[3]);
+    CHECK(parameters.parameterId(1, 2) == parameters.edgeMidBase[0]);
+    CHECK(parameters.parameterId(2, 9) == parameters.edgeMidBase[1]);
+    CHECK(parameters.parameterId(9, 2) == parameters.edgeMidBase[2]);
+    CHECK(parameters.parameterId(2, 1) == parameters.edgeMidBase[3]);
+    CHECK(parameters.parameterId(0, 1) == -1);
+    CHECK(parameters.parameterId(10, 1) == -1);
+
+    // Locations follow gcpcal(): panel centres, edge midpoints, corners.
+    auto close = [](const Eigen::Vector3d& a, double x, double y) {
+        return a.x() == Catch::Approx(x).epsilon(1e-14) &&
+               a.y() == Catch::Approx(y).epsilon(1e-14) &&
+               a.z() == Catch::Approx(0.0).epsilon(1e-14);
+    };
+    CHECK(close(parameters.location[parameters.centerId(0, 0)], 0.5, 0.5));
+    CHECK(close(parameters.location[parameters.centerId(6, 6)], 6.5, 6.5));
+    CHECK(close(parameters.location[parameters.cornerId[0]], 0.0, 0.0));
+    CHECK(close(parameters.location[parameters.cornerId[2]], 7.0, 7.0));
+    CHECK(close(parameters.location[parameters.edgeMidBase[0]], 0.0, 0.5));
+    CHECK(close(parameters.location[parameters.edgeMidBase[1]], 0.5, 7.0));
+    CHECK(close(parameters.location[parameters.edgeMidBase[2]], 7.0, 0.5));
+    CHECK(close(parameters.location[parameters.edgeMidBase[3]], 0.5, 0.0));
+}
+
+TEST_CASE("doublet panel spline: edge panel", "[splines][outer]") {
+    a502::Network net;
+    net.netname = "grid";
+    net.nm = 8;
+    net.nn = 8;
+    for (int n = 0; n < 8; ++n) {
+        for (int m = 0; m < 8; ++m) {
+            net.coordinates.push_back(static_cast<double>(m));
+            net.coordinates.push_back(static_cast<double>(n));
+            net.coordinates.push_back(0.0);
+        }
+    }
+
+    const auto flow = a502::Compressibility::fromAngles(0.6, 0.0, 0.0);
+    const auto parameters = a502::buildNetworkDoubletParameters(net);
+    REQUIRE(parameters.count == 81);
+
+    // Panel (0,3) lies on the first network row, away from the corners.
+    const auto spline =
+        a502::buildDoubletPanelSpline(net, flow, 0, 3, parameters);
+    REQUIRE(spline.valid);
+
+    // P5 is the midpoint of the first panel edge and is an explicit edge
+    // parameter.
+    const int p5Id = parameters.edgeMidBase[0] + 3;
+    REQUIRE(spline.rows[4].index.size() == 1);
+    CHECK(spline.rows[4].index[0] == p5Id);
+    CHECK(spline.rows[4].coefficient[0] == Catch::Approx(1.0).epsilon(1e-14));
+
+    // P9 is the panel-centre parameter.
+    const int p9Id = parameters.centerId(0, 3);
+    REQUIRE(spline.rows[8].index.size() == 1);
+    CHECK(spline.rows[8].index[0] == p9Id);
+    CHECK(spline.rows[8].coefficient[0] == Catch::Approx(1.0).epsilon(1e-14));
+
+    auto mu = [](double x, double y) {
+        return 1.0 + 2.0 * x + 3.0 * y + 4.0 * x * x / 2.0 +
+               5.0 * x * y + 6.0 * y * y / 2.0;
+    };
+
+    const a502::PanelGeometry panel =
+        a502::buildPanelGeometry(net.coordinates, net.nm, net.nn, 0, 3);
+    REQUIRE_FALSE(panel.degenerate);
+
+    for (int r = 0; r < 9; ++r) {
+        double got = 0.0;
+        double rowSum = 0.0;
+        for (std::size_t k = 0; k < spline.rows[static_cast<std::size_t>(r)]
+                                         .index.size();
+             ++k) {
+            const int id =
+                spline.rows[static_cast<std::size_t>(r)].index[k];
+            const double c =
+                spline.rows[static_cast<std::size_t>(r)].coefficient[k];
+            const Eigen::Vector3d& p =
+                parameters.location[static_cast<std::size_t>(id)];
+            got += c * mu(p.x(), p.y());
+            rowSum += c;
+        }
+        INFO("canonical point " << r);
+        CHECK(rowSum == Catch::Approx(1.0).epsilon(1e-9));
+        CHECK(got == Catch::Approx(mu(panel.cp[r].x(), panel.cp[r].y()))
+                       .epsilon(1e-8));
+    }
+}
+
+TEST_CASE("doublet panel spline: all synthetic panels", "[splines][outer]") {
+    a502::Network net;
+    net.netname = "grid";
+    net.nm = 8;
+    net.nn = 8;
+    for (int n = 0; n < 8; ++n) {
+        for (int m = 0; m < 8; ++m) {
+            net.coordinates.push_back(static_cast<double>(m));
+            net.coordinates.push_back(static_cast<double>(n));
+            net.coordinates.push_back(0.0);
+        }
+    }
+
+    const auto flow = a502::Compressibility::fromAngles(0.6, 0.0, 0.0);
+    const auto parameters = a502::buildNetworkDoubletParameters(net);
+
+    auto mu = [](double x, double y) {
+        return 1.0 + 2.0 * x + 3.0 * y + 4.0 * x * x / 2.0 +
+               5.0 * x * y + 6.0 * y * y / 2.0;
+    };
+
+    for (int panelJ = 0; panelJ < 7; ++panelJ) {
+        for (int panelI = 0; panelI < 7; ++panelI) {
+            INFO("panel " << panelI << "," << panelJ);
+            const auto spline = a502::buildDoubletPanelSpline(
+                net, flow, panelI, panelJ, parameters);
+            REQUIRE(spline.valid);
+
+            const a502::PanelGeometry panel = a502::buildPanelGeometry(
+                net.coordinates, net.nm, net.nn, panelI, panelJ);
+            REQUIRE_FALSE(panel.degenerate);
+
+            for (int r = 0; r < 9; ++r) {
+                double got = 0.0;
+                for (std::size_t k = 0;
+                     k < spline.rows[static_cast<std::size_t>(r)]
+                             .index.size();
+                     ++k) {
+                    const int id =
+                        spline.rows[static_cast<std::size_t>(r)].index[k];
+                    const double c =
+                        spline.rows[static_cast<std::size_t>(r)]
+                            .coefficient[k];
+                    const Eigen::Vector3d& p =
+                        parameters.location[static_cast<std::size_t>(id)];
+                    got += c * mu(p.x(), p.y());
+                }
+                INFO("canonical point " << r);
+                CHECK(got ==
+                      Catch::Approx(
+                          mu(panel.cp[r].x(), panel.cp[r].y()))
+                          .epsilon(1e-8));
+            }
+        }
+    }
+}
+
+TEST_CASE("doublet network spline: all synthetic panels",
+          "[splines][outer]") {
+    a502::Network net;
+    net.netname = "grid";
+    net.nm = 8;
+    net.nn = 8;
+    for (int n = 0; n < 8; ++n) {
+        for (int m = 0; m < 8; ++m) {
+            net.coordinates.push_back(static_cast<double>(m));
+            net.coordinates.push_back(static_cast<double>(n));
+            net.coordinates.push_back(0.0);
+        }
+    }
+
+    const auto flow = a502::Compressibility::fromAngles(0.6, 0.0, 0.0);
+    const auto parameters = a502::buildNetworkDoubletParameters(net);
+    const auto spline =
+        a502::buildNetworkDoubletSpline(net, flow, parameters);
+    REQUIRE(spline.valid);
+    CHECK(spline.nPanelM == 7);
+    CHECK(spline.nPanelN == 7);
+    CHECK(spline.nParameters == 81);
+    REQUIRE(spline.rows.size() == 9 * 7 * 7);
+
+    // Every row is a convex-like constant-reproducing stencil in exact
+    // arithmetic; only the fit coefficients carry roundoff.
+    for (const auto& row : spline.rows) {
+        REQUIRE_FALSE(row.index.empty());
+        double sum = 0.0;
+        for (double c : row.coefficient)
+            sum += c;
+        CHECK(sum == Catch::Approx(1.0).epsilon(1e-9));
+    }
+}
+
+TEST_CASE("doublet panel spline: sample edge panel", "[splines][outer]") {
+    a502::AeroModel model;
+    model.parse(samplePath("btac.inp").string());
+    REQUIRE(model.solve());
+    REQUIRE(model.networks.size() > 2);
+    const auto& net = model.networks[2]; // akl, 11x11
+    REQUIRE(net.nm == 11);
+    REQUIRE(net.nn == 11);
+
+    const auto parameters = a502::buildNetworkDoubletParameters(net);
+    REQUIRE(parameters.count == 12 * 12);
+
+    const auto spline =
+        a502::buildDoubletPanelSpline(net, model.flow, 0, 4, parameters);
+    REQUIRE(spline.valid);
+    for (int r = 0; r < 9; ++r) {
+        double rowSum = 0.0;
+        for (double c : spline.rows[static_cast<std::size_t>(r)].coefficient)
+            rowSum += c;
+        CHECK(rowSum == Catch::Approx(1.0).epsilon(1e-8));
+    }
+}
+
+TEST_CASE("doublet panel spline: all sample network panels",
+          "[splines][outer]") {
+    a502::AeroModel model;
+    model.parse(samplePath("btac.inp").string());
+    REQUIRE(model.solve());
+    REQUIRE(model.networks.size() > 2);
+    const auto& net = model.networks[2]; // akl, 11x11
+    REQUIRE(net.nm == 11);
+    REQUIRE(net.nn == 11);
+
+    const auto parameters = a502::buildNetworkDoubletParameters(net);
+    for (int panelJ = 0; panelJ < 10; ++panelJ) {
+        for (int panelI = 0; panelI < 10; ++panelI) {
+            INFO("panel " << panelI << "," << panelJ);
+            const auto spline = a502::buildDoubletPanelSpline(
+                net, model.flow, panelI, panelJ, parameters);
+            REQUIRE(spline.valid);
+            for (int r = 0; r < 9; ++r) {
+                double rowSum = 0.0;
+                for (double c :
+                     spline.rows[static_cast<std::size_t>(r)].coefficient)
+                    rowSum += c;
+                CHECK(rowSum == Catch::Approx(1.0).epsilon(1e-7));
+            }
+        }
+    }
+}
+
+TEST_CASE("doublet network spline: sample decks", "[splines][outer]") {
+    const char* decks[] = {"vss.inp", "swb.inp", "ellip.inp"};
+    for (const char* deck : decks) {
+        INFO("deck " << deck);
+        a502::AeroModel model;
+        model.parse(samplePath(deck).string());
+        REQUIRE(model.solve());
+
+        for (std::size_t k = 0; k < model.networks.size(); ++k) {
+            INFO("network " << k);
+            const auto& net = model.networks[k];
+            const auto parameters =
+                a502::buildNetworkDoubletParameters(net);
+            REQUIRE(parameters.count > 0);
+            const auto spline = a502::buildNetworkDoubletSpline(
+                net, model.flow, parameters);
+            REQUIRE(spline.valid);
+            CHECK(spline.rows.size() ==
+                  static_cast<std::size_t>(9) *
+                      static_cast<std::size_t>(spline.nPanelM) *
+                      static_cast<std::size_t>(spline.nPanelN));
+            for (const auto& row : spline.rows) {
+                REQUIRE_FALSE(row.index.empty());
+                double sum = 0.0;
+                for (double c : row.coefficient)
+                    sum += c;
+                CHECK(sum == Catch::Approx(1.0).epsilon(1e-6));
+            }
+        }
+    }
+}
+
 TEST_CASE("edgls: edge quadratic reproduction", "[splines][edge]") {
     const std::array<double, 4> d = {1.0, 1.0, 1.0, 1.0};
     const std::array<double, 4> w = {1.0, 1.0, 1.0, 1.0};
