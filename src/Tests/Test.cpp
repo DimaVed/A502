@@ -2554,6 +2554,100 @@ TEST_CASE("global system: equilibration and diagnostics", "[globalsystem]") {
     CHECK_FALSE(a502::solveGlobalBoundarySystem(empty).valid);
 }
 
+TEST_CASE("AeroModel: first end-to-end flow solve", "[aeromodel][flowsolve]") {
+    auto makeModel = [](int kt) {
+        a502::AeroModel model;
+        a502::Network net;
+        net.netname = "grid";
+        net.nm = 4;
+        net.nn = 4;
+        net.kt = kt;
+        for (int n = 0; n < 4; ++n) {
+            for (int m = 0; m < 4; ++m) {
+                net.coordinates.push_back(static_cast<double>(m));
+                net.coordinates.push_back(static_cast<double>(n));
+                net.coordinates.push_back(0.0);
+            }
+        }
+        model.networks.push_back(net);
+        model.amach = 0.6;
+        model.alpc = 4.0;
+        model.betc = 0.0;
+        REQUIRE(model.solve());
+        return model;
+    };
+
+    SECTION("doublet-only network") {
+        a502::AeroModel model = makeModel(12);
+        REQUIRE(model.solveFlow());
+        CHECK(model.isFlowSolved());
+        REQUIRE(model.panels.size() == 9);
+        bool nonZero = false;
+        for (const auto& panel : model.panels) {
+            CHECK(std::isfinite(panel.cp));
+            if (std::abs(panel.cp) > 1e-10)
+                nonZero = true;
+        }
+        CHECK(nonZero);
+
+        // Panel 0 corresponds to the centre control point at (0,0).
+        const auto layout =
+            a502::buildGlobalSingularityLayout(model.networks);
+        const auto system = a502::buildGlobalNormalFluxSystem(
+            model.networks, model.flow, layout, 1.0, 1.0, 1e-10, true);
+        REQUIRE(system.valid);
+        const auto solution =
+            a502::solveGlobalBoundarySystem(system);
+        REQUIRE(solution.valid);
+        const auto values =
+            a502::expandGlobalSolution(solution, layout);
+        const auto surface = a502::evaluateSurfaceFlow(
+            model.networks, model.flow, layout, values, true);
+        REQUIRE(surface.valid);
+        int target = -1;
+        for (std::size_t k = 0; k < model.controlPoints.size(); ++k) {
+            const auto& cp = model.controlPoints[k];
+            if (cp.kind == a502::ControlPointKind::PanelCenter &&
+                cp.panelI == 0 && cp.panelJ == 0)
+                target = static_cast<int>(k);
+        }
+        REQUIRE(target >= 0);
+        CHECK(model.panels[0].cp ==
+              Catch::Approx(surface.cp[static_cast<std::size_t>(target)])
+                  .epsilon(1e-12));
+    }
+
+    SECTION("source-only network") {
+        a502::AeroModel model = makeModel(7);
+        REQUIRE(model.solveFlow());
+        CHECK(model.isFlowSolved());
+        bool nonZero = false;
+        for (const auto& panel : model.panels) {
+            CHECK(std::isfinite(panel.cp));
+            if (std::abs(panel.cp) > 1e-10)
+                nonZero = true;
+        }
+        CHECK(nonZero);
+    }
+
+    SECTION("composite network is refused") {
+        a502::AeroModel model = makeModel(1);
+        CHECK_FALSE(model.solveFlow());
+        CHECK_FALSE(model.isFlowSolved());
+    }
+
+    SECTION("multiple networks are refused") {
+        a502::AeroModel model = makeModel(12);
+        a502::Network second = model.networks.front();
+        second.netname = "grid2";
+        for (std::size_t k = 0; k < second.coordinates.size(); k += 3)
+            second.coordinates[k] += 10.0;
+        model.networks.push_back(second);
+        REQUIRE(model.solve());
+        CHECK_FALSE(model.solveFlow());
+    }
+}
+
 TEST_CASE("control points: single square network", "[controlpoints]") {
     a502::Network net;
     net.netname = "plate";

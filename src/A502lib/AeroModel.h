@@ -108,8 +108,10 @@ struct SurfaceMaterial {
 // owning network index and a placeholder Cp for visualization.
 struct Panel {
     PanelGeometry geom;
-    int           network{0}; // owning $points network index (0-based)
-    double        cp{0.0};    // placeholder surface pressure coefficient
+    int           network{0}; // owning network index (0-based)
+    int           panelI{0};  // row index inside the network
+    int           panelJ{0};  // column index inside the network
+    double        cp{0.0};    // surface pressure coefficient
 };
 
 class AeroModel {
@@ -175,6 +177,16 @@ public:
     bool solve();                  // false if the model has no usable grid
     bool isSolved() const;         // true after a successful solve()
 
+    // First end-to-end singularity solve after solve().  Supported for a
+    // single network with exactly one active singularity type
+    // (source-only or doublet-only).  It uses the current simplified
+    // normal-mass-flux row set (cu = cl = 1, nropt = 2), not the full
+    // bconcl/bcopt per-kt defaults, and writes the resulting linear Cp into
+    // Panel::cp.  Returns false and leaves the placeholder Cp untouched for
+    // composite/multi-network systems or when the system is not solvable.
+    bool solveFlow();
+    bool isFlowSolved() const;
+
     // Finds the first section whose normalized keyword contains "kwFragment"
     // (sub-string, case-insensitive).  Returns nullptr when not found.
     const Section* findSection(const std::string& kwFragment) const;
@@ -191,6 +203,7 @@ private:
     void extractMaterials();
     void writeHeader(std::ostream& out) const;
     bool solved_{false};
+    bool flowSolved_{false};
 };
 
 } // namespace a502

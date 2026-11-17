@@ -41,7 +41,9 @@
   - аудит числа уравнений/неизвестных по сетям и типам точек;
   - прямой LU-solve с iterative refinement;
   - minimum-norm gauge (COD) для вырожденных/прямоугольных систем;
-  - восстановление полного вектора параметров.
+  - восстановление полного вектора параметров;
+  - первый end-to-end `AeroModel::solveFlow()` для одиночной
+    source-only/doublet-only сети.
 - Постпроцессинг:
   - поверхностные скорости;
   - `cpcal`-формулы: linear/slender/second-order/isentropic;
@@ -84,8 +86,10 @@
     обусловлено).
 - Материалы парсятся и дают `Cp`-ratios, но ещё не подключены к AIC/BC
   и к выбору формулы `Cp` по сети/поверхности при постпроцессинге.
-- `AeroModel::solve()` всё ещё не связан с глобальным решателем;
-  `Panel.cp` — заглушка.
+- `AeroModel::solveFlow()` — только одиночная source-only/doublet-only
+  сеть, упрощённый normal-flux BC (`cu=cl=1`, `nropt=2`); composite и
+  несколько сетей пока не решаются, `Panel.cp` при отказе остаётся
+  заглушкой.
 - Из генераторов геометрии есть только `$circular`; нет `$quadrilateral`,
   `$gothic`, `$elliptical`, `$trailing` и т.п.  В `$circular` не поддержан
   вариант `nopt>0` с z-картами без заголовка `=z`.
@@ -191,7 +195,9 @@
 - [ ] Портировать `ffpic`.
 - [ ] Портировать `qnfcal`.
 - [ ] Портировать `supsbi`/`supspi`.
-- [ ] Подключить solver к `AeroModel`.
+- [x] Подключить solver к `AeroModel`.
+  Сделан ограниченный `solveFlow()` (single-network source/doublet-only);
+  полный composite-путь ждёт A502 edge/corner-условий и elimination.
 - [x] Реализовать second-order/isentropic `Cp`.
 
 ## 5. Проверка и команды

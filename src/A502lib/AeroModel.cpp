@@ -3,6 +3,8 @@
 // Implementation of the A502 input deck parser / model (see AeroModel.h).
 
 #include "AeroModel.h"
+#include "FlowSolution.h"
+#include "GlobalBoundarySystem.h"
 #include "Logger.h"
 
 #include <algorithm>
@@ -180,6 +182,7 @@ void AeroModel::clear() {
     totalSurfaceArea = 0.0;
     totalPanels = 0;
     solved_ = false;
+    flowSolved_ = false;
 }
 
 void AeroModel::parse(const std::string& inpPath) {
@@ -1231,6 +1234,7 @@ bool AeroModel::solve() {
     totalPanels = 0;
     std::size_t skipped = 0;
     solved_ = false;
+    flowSolved_ = false;
 
     flow = Compressibility::fromAngles(amach, alpc, betc);
 
@@ -1264,6 +1268,8 @@ bool AeroModel::solve() {
                 Panel pan;
                 pan.geom = std::move(geom);
                 pan.network = static_cast<int>(netIdx);
+                pan.panelI = i;
+                pan.panelJ = j;
                 // Synthetic Cp so ParaView has a visible scalar (placeholder).
                 pan.cp = pan.geom.normal.x();
                 totalSurfaceArea += pan.geom.area;
@@ -1289,6 +1295,91 @@ bool AeroModel::solve() {
         BLOG(warning) << "solve(): no usable panels from networks";
     }
     return solved_;
+}
+
+bool AeroModel::isFlowSolved() const {
+    return flowSolved_;
+}
+
+bool AeroModel::solveFlow() {
+    flowSolved_ = false;
+    if (!solved_ || networks.size() != 1)
+        return false;
+
+    const Network& net = networks.front();
+    if (net.nm < 2 || net.nn < 2)
+        return false;
+
+    const std::vector<Network>& nets = networks;
+    const GlobalSingularityLayout layout =
+        buildGlobalSingularityLayout(nets);
+    if (layout.network.size() != 1)
+        return false;
+
+    const bool sourceOnly =
+        layout.activeSource > 0 && layout.activeDoublet == 0;
+    const bool doubletOnly =
+        layout.activeDoublet > 0 && layout.activeSource == 0;
+    if (!sourceOnly && !doubletOnly)
+        return false;
+
+    // Source-only networks have one unknown per panel and use the panel
+    // centre rows.  Doublet-only networks use the staggered parameter grid,
+    // whose cardinality equals the number of control points.
+    const bool includeEdgeAndCorner = doubletOnly;
+    const GlobalBoundarySystem system = buildGlobalNormalFluxSystem(
+        nets, flow, layout, 1.0, 1.0, 1.0e-10, includeEdgeAndCorner);
+    if (!system.valid)
+        return false;
+
+    const GlobalSystemSolution solution =
+        solveGlobalBoundarySystem(system);
+    if (!solution.valid)
+        return false;
+
+    const GlobalParameterValues values =
+        expandGlobalSolution(solution, layout);
+    if (!values.valid)
+        return false;
+
+    const SurfaceFlowResult surface = evaluateSurfaceFlow(
+        nets, flow, layout, values, includeEdgeAndCorner);
+    if (!surface.valid)
+        return false;
+
+    // evaluateSurfaceFlow walks the same control-point order, applying the
+    // same centre-only filter, so build the panel-centre lookup directly.
+    std::vector<int> centerIndex(
+        static_cast<std::size_t>((net.nm - 1) * (net.nn - 1)), -1);
+    std::size_t surfaceIndex = 0;
+    for (const ControlPoint& cp : controlPoints) {
+        if (!includeEdgeAndCorner &&
+            cp.kind != ControlPointKind::PanelCenter)
+            continue;
+        if (cp.kind == ControlPointKind::PanelCenter)
+            centerIndex[static_cast<std::size_t>(cp.panelIndex)] =
+                static_cast<int>(surfaceIndex);
+        ++surfaceIndex;
+    }
+    if (surfaceIndex != surface.cp.size())
+        return false;
+
+    for (Panel& panel : panels) {
+        const int panelIndex = panel.panelI + (net.nm - 1) * panel.panelJ;
+        if (panelIndex < 0 ||
+            panelIndex >= static_cast<int>(centerIndex.size()))
+            continue;
+        const int si = centerIndex[static_cast<std::size_t>(panelIndex)];
+        if (si >= 0)
+            panel.cp = surface.cp[static_cast<std::size_t>(si)];
+    }
+
+    flowSolved_ = true;
+    BLOG(info) << "solveFlow(): " << (sourceOnly ? "source" : "doublet")
+               << "-only network '" << net.netname << "', unknowns="
+               << solution.unknowns.size()
+               << ", residual=" << solution.residualNorm;
+    return true;
 }
 
 } // namespace a502
