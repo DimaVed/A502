@@ -12,6 +12,7 @@
 #include "BoundaryConditions.h"
 #include "GlobalInfluence.h"
 #include "Influence.h"
+#include "Matching.h"
 #include "NearField.h"
 #include "NetworkInfluence.h"
 #include "PanelGeometry.h"
@@ -1204,6 +1205,56 @@ TEST_CASE("boundary condition rows: nct=1 and nct=4",
         -firstCenter.normal.dot(flow.compd);
     CHECK(system.rhs(0) ==
           Catch::Approx(expectedRhs).epsilon(1e-12));
+}
+
+TEST_CASE("matching: shared full edge", "[matching]") {
+    auto makeGrid = [](double y0, const char* name) {
+        a502::Network net;
+        net.netname = name;
+        net.nm = 4;
+        net.nn = 4;
+        for (int n = 0; n < 4; ++n) {
+            for (int m = 0; m < 4; ++m) {
+                net.coordinates.push_back(static_cast<double>(m));
+                net.coordinates.push_back(y0 + static_cast<double>(n));
+                net.coordinates.push_back(0.0);
+            }
+        }
+        return net;
+    };
+
+    const std::vector<a502::Network> networks = {
+        makeGrid(0.0, "a"), makeGrid(3.0, "b")};
+    const auto edges = a502::buildNetworkEdges(networks);
+    REQUIRE(edges.size() == 8);
+
+    const auto matches = a502::findFullEdgeMatches(edges, 1e-10);
+    REQUIRE(matches.size() == 1);
+    CHECK(edges[static_cast<std::size_t>(matches[0].edgeA)].network == 0);
+    CHECK(edges[static_cast<std::size_t>(matches[0].edgeA)].edge == 2);
+    CHECK(edges[static_cast<std::size_t>(matches[0].edgeB)].network == 1);
+    CHECK(edges[static_cast<std::size_t>(matches[0].edgeB)].edge == 4);
+    CHECK_FALSE(matches[0].reversed);
+
+    const auto layout =
+        a502::buildGlobalSingularityLayout(networks);
+    REQUIRE(layout.totalDoublet == 50);
+    const auto rows =
+        a502::buildEdgeDoubletMatchingRows(networks, layout, matches);
+    REQUIRE(rows.valid);
+    REQUIRE(rows.nRows == 5); // 3 intervals + 2 endpoints
+    REQUIRE(rows.doublet.rows() == 5);
+    REQUIRE(rows.doublet.cols() == 50);
+    CHECK(rows.rhs.isZero(0.0));
+
+    for (int r = 0; r < rows.nRows; ++r)
+        CHECK(rows.doublet.row(r).cwiseAbs().sum() ==
+              Catch::Approx(2.0).epsilon(1e-14));
+
+    const int baseA = layout.network[0].doublet.edgeMidBase[1];
+    const int baseB = 25 + layout.network[1].doublet.edgeMidBase[3];
+    CHECK(rows.doublet(0, baseA) == Catch::Approx(1.0).epsilon(1e-14));
+    CHECK(rows.doublet(0, baseB) == Catch::Approx(-1.0).epsilon(1e-14));
 }
 
 TEST_CASE("control points: single square network", "[controlpoints]") {
