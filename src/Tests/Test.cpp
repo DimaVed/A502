@@ -988,6 +988,99 @@ TEST_CASE("network singularity types follow kt", "[networkinfluence]") {
     CHECK(global.activeDoublet == 32);
 }
 
+TEST_CASE("network influence: inactive singularity types are skipped",
+          "[networkinfluence]") {
+    auto makeGrid = [](int kt) {
+        a502::Network net;
+        net.netname = "grid";
+        net.nm = 4;
+        net.nn = 4;
+        net.kt = kt;
+        for (int n = 0; n < 4; ++n) {
+            for (int m = 0; m < 4; ++m) {
+                net.coordinates.push_back(static_cast<double>(m));
+                net.coordinates.push_back(static_cast<double>(n));
+                net.coordinates.push_back(0.0);
+            }
+        }
+        return net;
+    };
+
+    const auto flow = a502::Compressibility::fromAngles(0.6, 0.0, 0.0);
+    const Eigen::Vector3d x(1.5, 1.5, 1.0);
+
+    const a502::Network sourceOnly = makeGrid(7);
+    const auto sourceLayout =
+        a502::buildNetworkSingularityLayout(sourceOnly);
+    REQUIRE(sourceLayout.hasSource);
+    REQUIRE_FALSE(sourceLayout.hasDoublet);
+    const auto sourceInfl = a502::evaluateNetworkNearFieldInfluence(
+        sourceOnly, flow, x, sourceLayout);
+    REQUIRE(sourceInfl.valid);
+    REQUIRE(sourceInfl.source.cols() == sourceLayout.source.count);
+    REQUIRE(sourceInfl.doublet.cols() == sourceLayout.doublet.count);
+    CHECK_FALSE(sourceInfl.source.isZero(1e-12));
+    CHECK(sourceInfl.doublet.isZero(0.0));
+
+    const a502::Network doubletOnly = makeGrid(12);
+    const auto doubletLayout =
+        a502::buildNetworkSingularityLayout(doubletOnly);
+    REQUIRE_FALSE(doubletLayout.hasSource);
+    REQUIRE(doubletLayout.hasDoublet);
+    const auto doubletInfl = a502::evaluateNetworkNearFieldInfluence(
+        doubletOnly, flow, x, doubletLayout);
+    REQUIRE(doubletInfl.valid);
+    CHECK(doubletInfl.source.isZero(0.0));
+    CHECK_FALSE(doubletInfl.doublet.isZero(1e-12));
+
+    // Skipping the inactive type must not change the active columns.
+    const a502::Network composite = makeGrid(1);
+    const auto compositeLayout =
+        a502::buildNetworkSingularityLayout(composite);
+    const auto compositeInfl = a502::evaluateNetworkNearFieldInfluence(
+        composite, flow, x, compositeLayout);
+    REQUIRE(compositeInfl.valid);
+    CHECK((sourceInfl.source - compositeInfl.source).norm() < 1e-12);
+    CHECK((doubletInfl.doublet - compositeInfl.doublet).norm() < 1e-12);
+
+    // Local terms follow the same type flags.
+    auto panelCenter = [](const a502::Network& net) {
+        const auto panel = a502::buildPanelGeometry(
+            net.coordinates, net.nm, net.nn, 1, 1);
+        return panel.cp[8];
+    };
+
+    const auto sourceLocal = a502::buildPanelPointLocalTerms(
+        sourceOnly, flow, 1, 1, panelCenter(sourceOnly),
+        sourceLayout.doublet, sourceLayout.hasSource,
+        sourceLayout.hasDoublet);
+    REQUIRE(sourceLocal.valid);
+    CHECK_FALSE(sourceLocal.sourceId.empty());
+    CHECK(sourceLocal.sourceValue.size() ==
+          static_cast<Eigen::Index>(sourceLocal.sourceId.size()));
+    CHECK(sourceLocal.doubletId.empty());
+    CHECK(sourceLocal.doubletValue.size() == 0);
+
+    const auto doubletLocal = a502::buildPanelPointLocalTerms(
+        doubletOnly, flow, 1, 1, panelCenter(doubletOnly),
+        doubletLayout.doublet, doubletLayout.hasSource,
+        doubletLayout.hasDoublet);
+    REQUIRE(doubletLocal.valid);
+    CHECK(doubletLocal.sourceId.empty());
+    CHECK(doubletLocal.sourceValue.size() == 0);
+    CHECK_FALSE(doubletLocal.doubletId.empty());
+    CHECK(doubletLocal.doubletValue.cols() ==
+          static_cast<Eigen::Index>(doubletLocal.doubletId.size()));
+
+    // Explicit flags on a composite network select the requested terms.
+    const auto onlyDoublet = a502::buildPanelPointLocalTerms(
+        composite, flow, 1, 1, panelCenter(composite),
+        compositeLayout.doublet, false, true);
+    REQUIRE(onlyDoublet.valid);
+    CHECK(onlyDoublet.sourceId.empty());
+    CHECK_FALSE(onlyDoublet.doubletId.empty());
+}
+
 TEST_CASE("global influence: two networks and column offsets",
           "[networkinfluence]") {
     a502::Network net;
@@ -1453,6 +1546,82 @@ TEST_CASE("global boundary system: active columns and matching rows",
 
     // The under-determined composite system is not solved directly.
     CHECK_FALSE(a502::solveGlobalBoundarySystem(system).valid);
+}
+
+TEST_CASE("global system: mixed source-only and doublet-only networks",
+          "[globalsystem]") {
+    auto makeGrid = [](double y0, int kt, const char* name) {
+        a502::Network net;
+        net.netname = name;
+        net.nm = 4;
+        net.nn = 4;
+        net.kt = kt;
+        for (int n = 0; n < 4; ++n) {
+            for (int m = 0; m < 4; ++m) {
+                net.coordinates.push_back(static_cast<double>(m));
+                net.coordinates.push_back(y0 + static_cast<double>(n));
+                net.coordinates.push_back(0.0);
+            }
+        }
+        return net;
+    };
+
+    const auto flow = a502::Compressibility::fromAngles(0.6, 0.0, 0.0);
+    const std::vector<a502::Network> networks = {
+        makeGrid(0.0, 7, "src"), makeGrid(10.0, 12, "dbl")};
+    const auto layout =
+        a502::buildGlobalSingularityLayout(networks);
+    REQUIRE(layout.activeSource == 9);
+    REQUIRE(layout.activeDoublet == 25);
+    CHECK(layout.activeSourceOffset[0] == 0);
+    CHECK(layout.activeSourceOffset[1] == -1);
+    CHECK(layout.activeDoubletOffset[0] == -1);
+    CHECK(layout.activeDoubletOffset[1] == 0);
+    CHECK(layout.totalSource == 18);
+    CHECK(layout.totalDoublet == 50);
+
+    // Inactive per-network blocks of a global influence row stay zero.
+    const auto panel = a502::buildPanelGeometry(
+        networks[0].coordinates, 4, 4, 1, 1);
+    const Eigen::Vector3d point = panel.cp[8] + Eigen::Vector3d(0, 0, 0.5);
+    const auto influence =
+        a502::evaluateGlobalNearFieldInfluence(
+            networks, flow, point, layout);
+    REQUIRE(influence.valid);
+    CHECK_FALSE(influence.source
+                    .block(0, layout.sourceOffset[0], 4,
+                           layout.network[0].source.count)
+                    .isZero(0.0));
+    CHECK(influence.source
+              .block(0, layout.sourceOffset[1], 4,
+                     layout.network[1].source.count)
+              .isZero(0.0));
+    CHECK(influence.doublet
+              .block(0, layout.doubletOffset[0], 4,
+                     layout.network[0].doublet.count)
+              .isZero(0.0));
+    CHECK_FALSE(influence.doublet
+                    .block(0, layout.doubletOffset[1], 4,
+                           layout.network[1].doublet.count)
+                    .isZero(0.0));
+
+    const auto system = a502::buildGlobalNormalFluxSystem(
+        networks, flow, layout, 1.0, 1.0, 1e-10);
+    REQUIRE(system.valid);
+    CHECK(system.nBcRows == 18);
+    CHECK(system.nMatchingRows == 0);
+    CHECK(system.nRows == 18);
+    CHECK(system.nActiveSource == 9);
+    CHECK(system.nActiveDoublet == 25);
+    CHECK(system.nColumns == 34);
+    REQUIRE(system.matrix.rows() == 18);
+    REQUIRE(system.matrix.cols() == 34);
+    REQUIRE(system.rhs.size() == 18);
+    CHECK(system.matrix.allFinite());
+    CHECK(system.rhs.allFinite());
+
+    Eigen::FullPivLU<Eigen::MatrixXd> lu(system.matrix);
+    CHECK(lu.rank() == system.nRows);
 }
 
 TEST_CASE("control points: single square network", "[controlpoints]") {

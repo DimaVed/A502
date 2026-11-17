@@ -33,7 +33,9 @@ struct BoundaryConditionCoefficients {
 
 // Dependence of the source and doublet values at the panel-centre control
 // point on the local source/doublet parameters of that panel.  doubletValue
-// has rows [mu, dmu/dx, dmu/dy, dmu/dz] in global coordinates.
+// has rows [mu, dmu/dx, dmu/dy, dmu/dz] in global coordinates.  hasSource /
+// hasDoublet follow the network singularity types (A502 nts/ntd): terms of an
+// absent type are not evaluated and their index lists stay empty.
 struct LocalSingularityTerms {
     std::vector<int> sourceId;
     Eigen::VectorXd sourceValue;
@@ -45,11 +47,13 @@ struct LocalSingularityTerms {
 LocalSingularityTerms buildPanelPointLocalTerms(
     const Network& network, const Compressibility& flow, int panelI,
     int panelJ, const Eigen::Vector3d& fieldPoint,
-    const NetworkDoubletParameters& doubletParameters);
+    const NetworkDoubletParameters& doubletParameters,
+    bool hasSource = true, bool hasDoublet = true);
 
 LocalSingularityTerms buildPanelCenterLocalTerms(
     const Network& network, const Compressibility& flow, int panelI,
-    int panelJ, const NetworkDoubletParameters& doubletParameters);
+    int panelJ, const NetworkDoubletParameters& doubletParameters,
+    bool hasSource = true, bool hasDoublet = true);
 
 struct BoundaryRow {
     Eigen::VectorXd source;

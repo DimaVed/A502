@@ -148,10 +148,10 @@
 
 ## 4. Ближайшие конкретные задачи
 
-- [ ] Применить `hasSource`/`hasDoublet` в
+- [x] Применить `hasSource`/`hasDoublet` в
   `evaluateNetworkNearFieldInfluence()`,
   `buildPanelPointLocalTerms()`, `buildGlobalNearFieldAic()`.
-- [ ] Добавить тесты для `kt=7`, `kt=12` и смешанной системы.
+- [x] Добавить тесты для `kt=7`, `kt=12` и смешанной системы.
 - [ ] Добавить row/column scaling и rank/residual-диагностику в
   `GlobalBoundarySystem`.
 - [ ] Определить и реализовать gauge/regularization для doublet-only.

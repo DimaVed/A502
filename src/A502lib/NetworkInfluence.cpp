@@ -110,11 +110,15 @@ NetworkInfluence evaluateNetworkNearFieldInfluence(
     const int nn = network.nn;
     const int nPanelM = nm - 1;
     const int nPanelN = nn - 1;
-    if (nm < 2 || nn < 2 ||
-        layout.source.nPanelM != nPanelM ||
-        layout.source.nPanelN != nPanelN ||
-        layout.doublet.nPanelM != nPanelM ||
-        layout.doublet.nPanelN != nPanelN)
+    if (nm < 2 || nn < 2 || (!layout.hasSource && !layout.hasDoublet))
+        return out;
+    if (layout.hasSource &&
+        (layout.source.nPanelM != nPanelM ||
+         layout.source.nPanelN != nPanelN))
+        return out;
+    if (layout.hasDoublet &&
+        (layout.doublet.nPanelM != nPanelM ||
+         layout.doublet.nPanelN != nPanelN))
         return out;
 
     const std::size_t nPoints =
@@ -122,6 +126,8 @@ NetworkInfluence evaluateNetworkNearFieldInfluence(
     if (network.coordinates.size() < nPoints * 3)
         return out;
 
+    // The raw row keeps the full per-network column layout so that global
+    // offsets stay stable; columns of an inactive singularity type are zero.
     out.source = Eigen::Matrix<double, 4, Eigen::Dynamic>::Zero(
         4, layout.source.count);
     out.doublet = Eigen::Matrix<double, 4, Eigen::Dynamic>::Zero(
@@ -140,19 +146,24 @@ NetworkInfluence evaluateNetworkNearFieldInfluence(
             if (!pic.valid)
                 return NetworkInfluence{};
 
-            const SourceOuterSpline sourceSpline =
-                buildSourceOuterSpline(network, panelI, panelJ);
-            if (!sourceSpline.valid)
-                return NetworkInfluence{};
+            if (layout.hasSource) {
+                const SourceOuterSpline sourceSpline =
+                    buildSourceOuterSpline(network, panelI, panelJ);
+                if (!sourceSpline.valid)
+                    return NetworkInfluence{};
 
-            const Eigen::Matrix<double, 4, 9> sourceBlock =
-                pic.source * sourceSpline.coefficients;
-            for (int k = 0; k < 9; ++k) {
-                const int id =
-                    sourceSpline.neighborPanel[static_cast<std::size_t>(k)];
-                if (id >= 0 && id < layout.source.count)
-                    out.source.col(id) += sourceBlock.col(k);
+                const Eigen::Matrix<double, 4, 9> sourceBlock =
+                    pic.source * sourceSpline.coefficients;
+                for (int k = 0; k < 9; ++k) {
+                    const int id =
+                        sourceSpline.neighborPanel[static_cast<std::size_t>(k)];
+                    if (id >= 0 && id < layout.source.count)
+                        out.source.col(id) += sourceBlock.col(k);
+                }
             }
+
+            if (!layout.hasDoublet)
+                continue;
 
             const DoubletPanelSpline doubletSpline = buildDoubletPanelSpline(
                 network, flow, panelI, panelJ, layout.doublet);

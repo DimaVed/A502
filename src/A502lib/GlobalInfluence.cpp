@@ -90,8 +90,8 @@ GlobalAic buildGlobalNearFieldAic(
     const GlobalSingularityLayout& layout,
     const std::vector<Eigen::Vector3d>& fieldPoints) {
     GlobalAic out;
-    if (fieldPoints.empty() || layout.totalSource <= 0 ||
-        layout.totalDoublet <= 0)
+    if (fieldPoints.empty() ||
+        (layout.activeSource <= 0 && layout.activeDoublet <= 0))
         return out;
 
     out.nControlPoints = static_cast<int>(fieldPoints.size());

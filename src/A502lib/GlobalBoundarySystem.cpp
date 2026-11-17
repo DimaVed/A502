@@ -45,7 +45,8 @@ GlobalBoundarySystem buildGlobalNormalFluxSystem(
             const LocalSingularityTerms local =
                 buildPanelPointLocalTerms(
                     net, flow, cp.panelI, cp.panelJ, cp.position,
-                    netLayout.doublet);
+                    netLayout.doublet, netLayout.hasSource,
+                    netLayout.hasDoublet);
             if (!local.valid)
                 return GlobalBoundarySystem{};
 
