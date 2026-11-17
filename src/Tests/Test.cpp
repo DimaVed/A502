@@ -980,3 +980,86 @@ TEST_CASE("source outer spline: sample interior panel", "[splines][outer]") {
         CHECK(spline.coefficients.row(r).sum() ==
               Catch::Approx(1.0).epsilon(1e-9));
 }
+
+TEST_CASE("doublet outer spline: deep interior panel", "[splines][outer]") {
+    a502::Network net;
+    net.netname = "grid";
+    net.nm = 8;
+    net.nn = 8;
+    net.coordinates.reserve(8 * 8 * 3);
+    for (int n = 0; n < 8; ++n) {
+        for (int m = 0; m < 8; ++m) {
+            net.coordinates.push_back(static_cast<double>(m));
+            net.coordinates.push_back(static_cast<double>(n));
+            net.coordinates.push_back(0.0);
+        }
+    }
+
+    const auto flow = a502::Compressibility::fromAngles(0.6, 0.0, 0.0);
+    const auto spline = a502::buildDoubletOuterSpline(net, flow, 3, 3);
+    REQUIRE(spline.valid);
+
+    // All 25 neighbour panel indices must be present and distinct.
+    std::array<int, 25> idx = spline.neighborPanel;
+    std::sort(idx.begin(), idx.end());
+    for (int k = 0; k < 25; ++k) {
+        CHECK(idx[static_cast<std::size_t>(k)] >= 0);
+        if (k > 0)
+            CHECK(idx[static_cast<std::size_t>(k)] !=
+                  idx[static_cast<std::size_t>(k - 1)]);
+    }
+
+    // Constant doublet strength.
+    Eigen::Matrix<double, 25, 1> ones =
+        Eigen::Matrix<double, 25, 1>::Ones();
+    const Eigen::Matrix<double, 9, 1> constant =
+        spline.coefficients * ones;
+    for (int r = 0; r < 9; ++r)
+        CHECK(constant(r) == Catch::Approx(1.0).epsilon(1e-10));
+
+    // Quadratic doublet distribution.
+    auto mu = [](double x, double y) {
+        return 1.0 + 2.0 * x + 3.0 * y + 4.0 * x * x / 2.0 +
+               5.0 * x * y + 6.0 * y * y / 2.0;
+    };
+    Eigen::Matrix<double, 25, 1> values;
+    for (int k = 0; k < 25; ++k) {
+        const int p = spline.neighborPanel[static_cast<std::size_t>(k)];
+        const int pi = p % (net.nm - 1);
+        const int pj = p / (net.nm - 1);
+        const auto g = a502::buildPanelGeometry(
+            net.coordinates, net.nm, net.nn, pi, pj);
+        REQUIRE_FALSE(g.degenerate);
+        values(k) = mu(g.cp[8].x(), g.cp[8].y());
+    }
+
+    const a502::PanelGeometry panel =
+        a502::buildPanelGeometry(net.coordinates, net.nm, net.nn, 3, 3);
+    REQUIRE_FALSE(panel.degenerate);
+    const Eigen::Matrix<double, 9, 1> got = spline.coefficients * values;
+    for (int r = 0; r < 9; ++r)
+        CHECK(got(r) ==
+              Catch::Approx(mu(panel.cp[r].x(), panel.cp[r].y()))
+                  .epsilon(1e-8));
+}
+
+TEST_CASE("doublet outer spline: sample deep interior panel",
+          "[splines][outer]") {
+    a502::AeroModel model;
+    model.parse(samplePath("btac.inp").string());
+    REQUIRE(model.solve());
+    REQUIRE(model.networks.size() > 2);
+    const auto& net = model.networks[2]; // akl, 11x11
+    REQUIRE(net.nm == 11);
+    REQUIRE(net.nn == 11);
+
+    const auto spline = a502::buildDoubletOuterSpline(net, model.flow, 3, 3);
+    REQUIRE(spline.valid);
+
+    Eigen::Matrix<double, 25, 1> ones =
+        Eigen::Matrix<double, 25, 1>::Ones();
+    const Eigen::Matrix<double, 9, 1> constant =
+        spline.coefficients * ones;
+    for (int r = 0; r < 9; ++r)
+        CHECK(constant(r) == Catch::Approx(1.0).epsilon(1e-8));
+}

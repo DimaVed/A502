@@ -22,6 +22,8 @@
 
 #include <Eigen/Dense>
 
+#include "Compressibility.h"
+
 namespace a502 {
 
 struct Network; // defined in AeroModel.h
@@ -39,5 +41,22 @@ struct SourceOuterSpline {
 
 SourceOuterSpline buildSourceOuterSpline(const Network& network,
                                          int panelI, int panelJ);
+
+struct DoubletOuterSpline {
+    // Network-local panel-center indices i + (nm-1)*j for the 5x5 block.
+    std::array<int, 25> neighborPanel{};
+    // rows: P1..P9; columns: the 25 panel-center doublet parameters
+    Eigen::Matrix<double, 9, 25> coefficients{
+        Eigen::Matrix<double, 9, 25>::Zero()};
+    bool valid{false};
+};
+
+// Doublet analysis outer spline.  This first implementation covers deep
+// interior panels, where all four panel corners and all four edge midpoints
+// have the full blccal stencils.  Edge/corner grid points and network-edge
+// doublet parameters are handled later.
+DoubletOuterSpline buildDoubletOuterSpline(const Network& network,
+                                           const Compressibility& flow,
+                                           int panelI, int panelJ);
 
 } // namespace a502
