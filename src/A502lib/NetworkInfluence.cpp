@@ -11,56 +11,87 @@
 
 namespace a502 {
 
-NetworkSingularityTypes networkSingularityTypes(int kt) {
-    NetworkSingularityTypes out;
+NetworkTypeDefaults networkTypeDefaults(int kt, double mach) {
+    // Values from inbc(), labels 610..810 in panair.f90.
+    NetworkTypeDefaults out;
     switch (kt) {
-    case 6:  // off-body sources
-    case 7:  // source alone, mass flux
+    case 1: // indirect mass flux b.c.
+        out = {1, 12, 2, 5, 3, 7, 2};
+        break;
+    case 2: // thin wake (thickness flag not parsed; default tkw = 0)
+        out = {0, 12, 0, 0, 0, 4, 3};
+        break;
+    case 3: // superinclined panels
+        out = {1, 12, 0, 3, 2, 7, 2};
+        break;
+    case 4: // inlets
+        out = {1, 12, 0, 2, 1, 7, 2};
+        break;
+    case 5: // bases
+        if (mach > 1.0)
+            out = {1, 12, 2, 2, 2, 6, 2};
+        else
+            out = {1, 12, 2, 6, 9, 7, 2};
+        break;
+    case 6: // off-body sources
+        out = {1, 0, 0, 5, 2, 0, 2};
+        break;
+    case 7: // source alone, mass flux b.c.
+        out = {1, 0, 0, 2, 3, 0, 2};
+        break;
+    case 8: // direct mass flux b.c., composite networks
+        out = {1, 12, 2, 2, 3, 7, 2};
+        break;
+    case 9: // inlet b.c. with total mass flux
+        out = {1, 12, 2, 2, 7, 7, 2};
+        break;
+    case 11: // indirect velocity b.c., composite networks
+        out = {1, 12, 2, 14, 3, 7, 2};
+        break;
+    case 12: // thin wings, velocity b.c., doublets alone
+        out = {0, 12, 0, 0, 3, 13, 3};
+        break;
+    case 13: // superinclined (A502 requires Mach > 1)
+        out = {1, 12, 0, 12, 2, 7, 2};
+        break;
+    case 14: // inlets, velocity b.c.
+        out = {1, 12, 0, 11, 1, 7, 2};
+        break;
+    case 15: // direct velocity b.c.
+        out = {1, 12, 2, 11, 3, 7, 2};
+        break;
     case 17: // source alone, velocity b.c.
-        out.sourceType = 1;
-        out.doubletType = 0;
+        out = {1, 0, 0, 11, 3, 0, 2};
         break;
-    case 12: // thin wing, doublets alone
-    case 21: // doublets alone
-    case 22:
-        out.sourceType = 0;
-        out.doubletType = 12;
-        break;
-    case 18:
-        out.sourceType = 0;
-        out.doubletType = 18;
+    case 18: // type 18 wake (source option and wake matching not parsed)
+        out = {0, 18, 2, 0, 0, 15, 2};
         break;
     case 19: // type 6 design wake
-        out.sourceType = 0;
-        out.doubletType = 6;
+        out = {0, 6, 0, 0, 0, 18, 2};
         break;
-    case 20:
-        out.sourceType = 0;
-        out.doubletType = 20;
+    case 20: // type 20 wake
+        out = {0, 20, 2, 0, 0, 6, 2};
         break;
-    case 13:
-        out.sourceType = 1;
-        out.doubletType = 12;
+    case 21: // doublets alone
+        out = {0, 12, 4, 0, 3, 7, 4};
         break;
-    case 1:
-    case 3:
-    case 4:
-    case 5:
-    case 8:
-    case 9:
-    case 11:
-    case 14:
-    case 15:
-    case 16:
-        out.sourceType = 1;
-        out.doubletType = 12;
+    case 22:
+        // Not accepted by the bundled inbc() dispatch, but other A502
+        // versions describe kt=22 as doublets alone; keep that mapping.
+        out = {0, 12, 4, 0, 3, 7, 4};
         break;
     default:
-        // Unknown/arbitrary network type: keep both active.
-        out.sourceType = 1;
-        out.doubletType = 12;
+        // Unknown/arbitrary network type: keep the kt=1 composite defaults.
         break;
     }
+    return out;
+}
+
+NetworkSingularityTypes networkSingularityTypes(int kt) {
+    const NetworkTypeDefaults defaults = networkTypeDefaults(kt);
+    NetworkSingularityTypes out;
+    out.sourceType = defaults.sourceType;
+    out.doubletType = defaults.doubletType;
     return out;
 }
 

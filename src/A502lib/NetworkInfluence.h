@@ -45,6 +45,29 @@ struct NetworkSingularityTypes {
 // keep both singularity types active.
 NetworkSingularityTypes networkSingularityTypes(int kt);
 
+// Default network type and boundary-condition options from the per-kt
+// dispatch in A502 inbc():
+//   nts / ntd  singularity types (sourceType / doubletType),
+//   ipot       potential/velocity flag,
+//   nlopt1/2   left-hand-side coefficient options of the first/second
+//              boundary condition at a control point,
+//   nropt1/2   right-hand-side options.
+// Deck-specific overrides read from the kt card (thin-wake thickness,
+// type-18 source flag/wake matching, type-19 user options) are not parsed
+// yet.  Unknown kt codes fall back to the kt=1 defaults; kt=13 returns its
+// supersonic settings for any Mach number.
+struct NetworkTypeDefaults {
+    int sourceType{1};
+    int doubletType{12};
+    int ipot{2};
+    int nlopt1{5};
+    int nropt1{3};
+    int nlopt2{7};
+    int nropt2{2};
+};
+
+NetworkTypeDefaults networkTypeDefaults(int kt, double mach = 0.0);
+
 struct NetworkSingularityLayout {
     NetworkSourceParameters source;
     NetworkDoubletParameters doublet;

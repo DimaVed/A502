@@ -988,6 +988,127 @@ TEST_CASE("network singularity types follow kt", "[networkinfluence]") {
     CHECK(global.activeDoublet == 32);
 }
 
+TEST_CASE("network type defaults follow inbc", "[networkinfluence]") {
+    const auto kt1 = a502::networkTypeDefaults(1);
+    CHECK(kt1.sourceType == 1);
+    CHECK(kt1.doubletType == 12);
+    CHECK(kt1.ipot == 2);
+    CHECK(kt1.nlopt1 == 5);
+    CHECK(kt1.nropt1 == 3);
+    CHECK(kt1.nlopt2 == 7);
+    CHECK(kt1.nropt2 == 2);
+
+    const auto kt2 = a502::networkTypeDefaults(2);
+    CHECK(kt2.sourceType == 0);
+    CHECK(kt2.doubletType == 12);
+    CHECK(kt2.ipot == 0);
+    CHECK(kt2.nlopt1 == 0);
+    CHECK(kt2.nropt1 == 0);
+    CHECK(kt2.nlopt2 == 4);
+    CHECK(kt2.nropt2 == 3);
+
+    const auto kt3 = a502::networkTypeDefaults(3);
+    CHECK(kt3.nlopt1 == 3);
+    CHECK(kt3.nropt1 == 2);
+
+    const auto kt4 = a502::networkTypeDefaults(4);
+    CHECK(kt4.nlopt1 == 2);
+    CHECK(kt4.nropt1 == 1);
+
+    const auto baseSubsonic = a502::networkTypeDefaults(5, 0.6);
+    CHECK(baseSubsonic.nlopt1 == 6);
+    CHECK(baseSubsonic.nropt1 == 9);
+    CHECK(baseSubsonic.nlopt2 == 7);
+    const auto baseSupersonic = a502::networkTypeDefaults(5, 1.2);
+    CHECK(baseSupersonic.nlopt1 == 2);
+    CHECK(baseSupersonic.nropt1 == 2);
+    CHECK(baseSupersonic.nlopt2 == 6);
+    CHECK(baseSupersonic.nropt2 == 2);
+
+    const auto kt6 = a502::networkTypeDefaults(6);
+    CHECK(kt6.sourceType == 1);
+    CHECK(kt6.doubletType == 0);
+    CHECK(kt6.nlopt1 == 5);
+    CHECK(kt6.nropt1 == 2);
+
+    const auto kt7 = a502::networkTypeDefaults(7);
+    CHECK(kt7.sourceType == 1);
+    CHECK(kt7.doubletType == 0);
+    CHECK(kt7.nlopt1 == 2);
+    CHECK(kt7.nropt1 == 3);
+
+    const auto kt8 = a502::networkTypeDefaults(8);
+    CHECK(kt8.sourceType == 1);
+    CHECK(kt8.doubletType == 12);
+    CHECK(kt8.nlopt1 == 2);
+
+    const auto kt9 = a502::networkTypeDefaults(9);
+    CHECK(kt9.nropt1 == 7);
+
+    const auto kt11 = a502::networkTypeDefaults(11);
+    CHECK(kt11.nlopt1 == 14);
+
+    const auto kt12 = a502::networkTypeDefaults(12);
+    CHECK(kt12.sourceType == 0);
+    CHECK(kt12.doubletType == 12);
+    CHECK(kt12.ipot == 0);
+    CHECK(kt12.nlopt1 == 0);
+    CHECK(kt12.nropt1 == 3);
+    CHECK(kt12.nlopt2 == 13);
+    CHECK(kt12.nropt2 == 3);
+
+    const auto kt13 = a502::networkTypeDefaults(13, 1.5);
+    CHECK(kt13.nlopt1 == 12);
+    CHECK(kt13.nropt1 == 2);
+
+    const auto kt14 = a502::networkTypeDefaults(14);
+    CHECK(kt14.nlopt1 == 11);
+    CHECK(kt14.nropt1 == 1);
+
+    const auto kt15 = a502::networkTypeDefaults(15);
+    CHECK(kt15.nlopt1 == 11);
+    CHECK(kt15.nropt1 == 3);
+
+    const auto kt17 = a502::networkTypeDefaults(17);
+    CHECK(kt17.sourceType == 1);
+    CHECK(kt17.doubletType == 0);
+    CHECK(kt17.nlopt1 == 11);
+
+    const auto kt18 = a502::networkTypeDefaults(18);
+    CHECK(kt18.sourceType == 0);
+    CHECK(kt18.doubletType == 18);
+    CHECK(kt18.ipot == 2);
+    CHECK(kt18.nlopt1 == 0);
+    CHECK(kt18.nlopt2 == 15);
+    CHECK(kt18.nropt2 == 2);
+
+    const auto kt19 = a502::networkTypeDefaults(19);
+    CHECK(kt19.sourceType == 0);
+    CHECK(kt19.doubletType == 6);
+    CHECK(kt19.nlopt2 == 18);
+
+    const auto kt20 = a502::networkTypeDefaults(20);
+    CHECK(kt20.sourceType == 0);
+    CHECK(kt20.doubletType == 20);
+    CHECK(kt20.nlopt2 == 6);
+
+    const auto kt21 = a502::networkTypeDefaults(21);
+    CHECK(kt21.sourceType == 0);
+    CHECK(kt21.doubletType == 12);
+    CHECK(kt21.ipot == 4);
+    CHECK(kt21.nropt2 == 4);
+
+    // Thin wakes are doublet-only by default.
+    CHECK(a502::networkSingularityTypes(2).sourceType == 0);
+    CHECK(a502::networkSingularityTypes(2).doubletType == 12);
+
+    // Unknown kt codes keep the permissive composite defaults.
+    const auto unknown = a502::networkTypeDefaults(99);
+    CHECK(unknown.sourceType == 1);
+    CHECK(unknown.doubletType == 12);
+    CHECK(unknown.nlopt1 == 5);
+}
+
 TEST_CASE("network influence: inactive singularity types are skipped",
           "[networkinfluence]") {
     auto makeGrid = [](int kt) {
