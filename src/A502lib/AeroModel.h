@@ -32,6 +32,7 @@
 #include <Eigen/Dense>
 
 #include "Compressibility.h"
+#include "ControlPoints.h"
 #include "PanelGeometry.h"
 
 namespace a502 {
@@ -149,6 +150,7 @@ public:
     // synthetic Cp field so the result can be inspected in a visualizer.
     Compressibility     flow;                  // freestream metric, set by solve()
     std::vector<Panel>  panels;                // all cells, in A502 order
+    std::vector<ControlPoint> controlPoints;   // centers + network edge/corner points
     double              totalSurfaceArea{0.0}; // sum of panel areas
     std::size_t         totalPanels{0};        // panels.size() after solve()
 

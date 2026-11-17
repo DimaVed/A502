@@ -165,6 +165,7 @@ void AeroModel::clear() {
     networks.clear();
     flow = Compressibility{};
     panels.clear();
+    controlPoints.clear();
     totalSurfaceArea = 0.0;
     totalPanels = 0;
     solved_ = false;
@@ -934,6 +935,12 @@ bool AeroModel::solve() {
                 panels.push_back(std::move(pan));
             }
         }
+
+        std::vector<ControlPoint> cps = buildNetworkControlPoints(n);
+        for (auto& cp : cps) {
+            cp.network = static_cast<int>(netIdx);
+            controlPoints.push_back(std::move(cp));
+        }
     }
 
     totalPanels = panels.size();
@@ -941,7 +948,8 @@ bool AeroModel::solve() {
     if (solved_) {
         BLOG(info) << "solve(): " << totalPanels << " panels, "
                    << skipped << " degenerate skipped, total area="
-                   << totalSurfaceArea;
+                   << totalSurfaceArea << ", control points="
+                   << controlPoints.size();
     } else {
         BLOG(warning) << "solve(): no usable panels from networks";
     }

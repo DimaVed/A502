@@ -11,6 +11,7 @@
 #include "Compressibility.h"
 #include "PanelGeometry.h"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -386,4 +387,89 @@ TEST_CASE("panel scaled frames", "[compressibility][refloc]") {
             }
         }
     }
+}
+
+TEST_CASE("control points: single square network", "[controlpoints]") {
+    a502::Network net;
+    net.netname = "plate";
+    net.nm = 2;
+    net.nn = 2;
+    net.coordinates = {0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                       0.0, 1.0, 0.0, 1.0, 1.0, 0.0};
+
+    const auto cps = a502::buildNetworkControlPoints(net);
+    REQUIRE(cps.size() == 9);
+
+    int centers = 0, edges = 0, corners = 0;
+    for (const auto& cp : cps) {
+        switch (cp.kind) {
+        case a502::ControlPointKind::PanelCenter: ++centers; break;
+        case a502::ControlPointKind::EdgeMidpoint: ++edges; break;
+        case a502::ControlPointKind::Corner: ++corners; break;
+        }
+        CHECK(std::abs(cp.normal.norm() - 1.0) < 1e-12);
+        CHECK(cp.normal.isApprox(Eigen::Vector3d(0, 0, -1)));
+    }
+    CHECK(centers == 1);
+    CHECK(edges == 4);
+    CHECK(corners == 4);
+
+    // Panel center: P9 withdrawn 1% along the bisector towards P5/P8.
+    const auto center = std::find_if(
+        cps.begin(), cps.end(), [](const a502::ControlPoint& c) {
+            return c.kind == a502::ControlPointKind::PanelCenter;
+        });
+    REQUIRE(center != cps.end());
+    CHECK(center->position.isApprox(Eigen::Vector3d(0.4975, 0.4975, 0.0),
+                                    1e-14));
+
+    // Corner P1 = (0,0), withdrawn 25% towards P5/P8.
+    const auto corner = std::find_if(
+        cps.begin(), cps.end(), [](const a502::ControlPoint& c) {
+            return c.kind == a502::ControlPointKind::Corner;
+        });
+    REQUIRE(corner != cps.end());
+    CHECK(corner->position.isApprox(Eigen::Vector3d(0.0625, 0.0625, 0.0),
+                                    1e-14));
+}
+
+TEST_CASE("control points: sample networks", "[controlpoints]") {
+    a502::AeroModel model;
+    model.parse(samplePath("swb.inp").string());
+    REQUIRE(model.solve());
+
+    std::size_t wingaCenters = 0, wingaEdges = 0, wingaCorners = 0;
+    for (const auto& cp : model.controlPoints) {
+        if (cp.network != 0)
+            continue;
+        // winga: nm=11, nn=3 -> 20 centers, 24 edge midpoints, 4 corners.
+        CHECK(std::abs(cp.normal.norm() - 1.0) < 1e-10);
+        switch (cp.kind) {
+        case a502::ControlPointKind::PanelCenter: ++wingaCenters; break;
+        case a502::ControlPointKind::EdgeMidpoint: ++wingaEdges; break;
+        case a502::ControlPointKind::Corner: ++wingaCorners; break;
+        }
+    }
+    CHECK(wingaCenters == 20);
+    CHECK(wingaEdges == 24);
+    CHECK(wingaCorners == 4);
+
+    // No coincident control points within a network.
+    for (std::size_t i = 0; i < model.controlPoints.size(); ++i) {
+        for (std::size_t j = i + 1; j < model.controlPoints.size(); ++j) {
+            const auto& a = model.controlPoints[i];
+            const auto& b = model.controlPoints[j];
+            if (a.network != b.network)
+                continue;
+            CHECK((a.position - b.position).norm() > 1e-9);
+        }
+    }
+
+    // bodyb contains collapsed rows/points; the generator must not crash and
+    // must not emit coincident points.
+    std::size_t bodybCount = 0;
+    for (const auto& cp : model.controlPoints)
+        if (cp.network == 4)
+            ++bodybCount;
+    CHECK(bodybCount > 0);
 }
