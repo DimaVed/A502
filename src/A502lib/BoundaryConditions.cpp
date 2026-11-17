@@ -378,6 +378,135 @@ BoundaryConditionCoefficients standardNormalMassFlux(
     return out;
 }
 
+LeftHandBoundaryOption buildLeftHandBoundaryOption(
+    int nlopt, const Compressibility& flow,
+    const Eigen::Vector3d& normal) {
+    LeftHandBoundaryOption out;
+    if (nlopt == 0) {
+        out.supported = true;
+        out.hasCondition = false;
+        return out;
+    }
+    out.hasCondition = true;
+
+    BoundaryConditionCoefficients bc;
+    switch (nlopt) {
+    // ---- normal perturbation mass flux (nct = 1) ------------------------
+    case 2: // upper surface
+        bc.nct = 1;
+        bc.cu = 1.0;
+        break;
+    case 3: // lower surface
+        bc.nct = 1;
+        bc.cl = 1.0;
+        break;
+    case 4: // average
+        bc.nct = 1;
+        bc.cu = 0.5;
+        bc.cl = 0.5;
+        break;
+    case 5: // difference
+        bc.nct = 1;
+        bc.cu = 1.0;
+        bc.cl = -1.0;
+        break;
+
+    // ---- perturbation potential (nct = 4) -------------------------------
+    case 6: // upper surface
+        bc.nct = 4;
+        bc.du = 1.0;
+        break;
+    case 7: // lower surface
+        bc.nct = 4;
+        bc.dl = 1.0;
+        break;
+    case 8: // average
+        bc.nct = 4;
+        bc.du = 0.5;
+        bc.dl = 0.5;
+        break;
+    case 9: // difference
+        bc.nct = 4;
+        bc.du = 1.0;
+        bc.dl = -1.0;
+        break;
+    case 15:
+    case 16:
+    case 17: // delta(cp...)-style conditions use the average potential
+        bc.nct = 4;
+        bc.du = 0.5;
+        bc.dl = 0.5;
+        break;
+
+    // ---- normal perturbation velocity (nct = 2) -------------------------
+    case 11:
+    case 12:
+    case 13:
+    case 14: {
+        const double nnorm = normal.norm();
+        if (!(nnorm > 0.0))
+            return out;
+        const Eigen::Vector3d zn = normal / nnorm;
+        const Eigen::Vector3d zncs =
+            compressibilityScale(flow.betams, flow.compd, zn);
+
+        // bcopt() constants al1, al2, enx1, enx2 default to 0,0,1,1; the
+        // $compressibility axis-angle input options are not parsed yet.
+        const double al1 = 0.0;
+        const double al2 = 0.0;
+        const double enx1 = 1.0;
+        const double enx2 = 1.0;
+        const double enx = flow.compd.dot(zn);
+        const double enxm = flow.mach * enx;
+        double alam = al1;
+        if (enxm >= enx2) {
+            alam = al2;
+        } else if (enxm > enx1 && enx2 > enx1) {
+            alam = (al2 * (enxm - enx1) + al1 * (enx2 - enxm)) /
+                   (enx2 - enx1);
+        }
+        alam *= flow.mach * flow.mach * enx;
+
+        const Eigen::Vector3d h = zn - alam * flow.compd;
+        const double hznc = h.dot(zn);
+        const double zncsn = zncs.dot(zn);
+        if (std::abs(zncsn) <= 1.0e-30)
+            return out;
+        const double factor = hznc / zncsn;
+        const Eigen::Vector3d tangential = h - factor * zncs;
+
+        bc.nct = 2;
+        if (nlopt == 11) { // upper surface
+            bc.cu = factor;
+            bc.tu = tangential;
+        } else if (nlopt == 12) { // lower surface
+            bc.cl = factor;
+            bc.tl = tangential;
+        } else if (nlopt == 13) { // average
+            bc.cu = 0.5 * factor;
+            bc.cl = 0.5 * factor;
+            bc.tu = 0.5 * tangential;
+            bc.tl = 0.5 * tangential;
+        } else { // 14: difference
+            bc.cu = factor;
+            bc.cl = -factor;
+            bc.tu = tangential;
+            bc.tl = -tangential;
+        }
+        break;
+    }
+
+    default:
+        // nlopt=1 (input coefficients), 10 (ccof), 18..20 (materials),
+        // 21..25 are not ported yet.
+        return out;
+    }
+
+    out.coefficients = bc;
+    out.supported = true;
+    return out;
+}
+
 BoundarySystemRows buildNetworkNormalFluxRows(
     const Network& network, const Compressibility& flow,
     const NetworkSingularityLayout& layout,

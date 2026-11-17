@@ -1479,6 +1479,112 @@ TEST_CASE("boundary condition rows: nct=1 and nct=4",
           Catch::Approx(expectedRhs).epsilon(1e-12));
 }
 
+TEST_CASE("boundary condition options follow bcopt",
+          "[boundaryconditions]") {
+    const auto flow = a502::Compressibility::fromAngles(0.6, 4.0, 0.0);
+    const Eigen::Vector3d normal =
+        Eigen::Vector3d(0.2, -0.3, 0.9).normalized();
+
+    auto option = [&](int nlopt) {
+        return a502::buildLeftHandBoundaryOption(nlopt, flow, normal);
+    };
+
+    const auto none = option(0);
+    CHECK(none.supported);
+    CHECK_FALSE(none.hasCondition);
+
+    for (int nlopt : {1, 10, 18, 19, 20, 21, 25}) {
+        INFO("nlopt " << nlopt);
+        const auto unsupported = option(nlopt);
+        CHECK_FALSE(unsupported.supported);
+        CHECK(unsupported.hasCondition);
+    }
+
+    struct Expected {
+        int nlopt;
+        int nct;
+        double cu, cl, du, dl;
+    };
+    const Expected expected[] = {
+        {2, 1, 1.0, 0.0, 0.0, 0.0},
+        {3, 1, 0.0, 1.0, 0.0, 0.0},
+        {4, 1, 0.5, 0.5, 0.0, 0.0},
+        {5, 1, 1.0, -1.0, 0.0, 0.0},
+        {6, 4, 0.0, 0.0, 1.0, 0.0},
+        {7, 4, 0.0, 0.0, 0.0, 1.0},
+        {8, 4, 0.0, 0.0, 0.5, 0.5},
+        {9, 4, 0.0, 0.0, 1.0, -1.0},
+        {15, 4, 0.0, 0.0, 0.5, 0.5},
+        {16, 4, 0.0, 0.0, 0.5, 0.5},
+        {17, 4, 0.0, 0.0, 0.5, 0.5},
+    };
+    for (const Expected& e : expected) {
+        INFO("nlopt " << e.nlopt);
+        const auto got = option(e.nlopt);
+        REQUIRE(got.supported);
+        CHECK(got.hasCondition);
+        CHECK(got.coefficients.nct == e.nct);
+        CHECK(got.coefficients.cu == Catch::Approx(e.cu).epsilon(1e-14));
+        CHECK(got.coefficients.cl == Catch::Approx(e.cl).epsilon(1e-14));
+        CHECK(got.coefficients.du == Catch::Approx(e.du).epsilon(1e-14));
+        CHECK(got.coefficients.dl == Catch::Approx(e.dl).epsilon(1e-14));
+        CHECK(got.coefficients.tu.isZero(0.0));
+        CHECK(got.coefficients.tl.isZero(0.0));
+    }
+
+    // Velocity options: with the default axis-angle constants the tangential
+    // coefficient is zn - (1/(zncs.zn))*zncs.
+    auto compress = [&](const Eigen::Vector3d& v) {
+        const double f = (flow.betams - 1.0) * v.dot(flow.compd) /
+                         flow.compd.squaredNorm();
+        return v + f * flow.compd;
+    };
+    const Eigen::Vector3d zncs = compress(normal);
+    const double factor = 1.0 / zncs.dot(normal);
+    const Eigen::Vector3d tangential = normal - factor * zncs;
+
+    const auto upper = option(11);
+    REQUIRE(upper.supported);
+    CHECK(upper.coefficients.nct == 2);
+    CHECK(upper.coefficients.cu == Catch::Approx(factor).epsilon(1e-12));
+    CHECK(upper.coefficients.cl == 0.0);
+    CHECK((upper.coefficients.tu - tangential).norm() < 1e-12);
+    CHECK(upper.coefficients.tl.isZero(0.0));
+
+    const auto lower = option(12);
+    REQUIRE(lower.supported);
+    CHECK(lower.coefficients.cl == Catch::Approx(factor).epsilon(1e-12));
+    CHECK(lower.coefficients.cu == 0.0);
+    CHECK((lower.coefficients.tl - tangential).norm() < 1e-12);
+
+    const auto average = option(13);
+    REQUIRE(average.supported);
+    CHECK(average.coefficients.cu ==
+          Catch::Approx(0.5 * factor).epsilon(1e-12));
+    CHECK(average.coefficients.cl ==
+          Catch::Approx(0.5 * factor).epsilon(1e-12));
+    CHECK((average.coefficients.tu - 0.5 * tangential).norm() < 1e-12);
+    CHECK((average.coefficients.tl - 0.5 * tangential).norm() < 1e-12);
+
+    const auto difference = option(14);
+    REQUIRE(difference.supported);
+    CHECK(difference.coefficients.cu ==
+          Catch::Approx(factor).epsilon(1e-12));
+    CHECK(difference.coefficients.cl ==
+          Catch::Approx(-factor).epsilon(1e-12));
+    CHECK((difference.coefficients.tu - tangential).norm() < 1e-12);
+    CHECK((difference.coefficients.tl + tangential).norm() < 1e-12);
+
+    // At M = 0 the velocity option reduces to the bare normal direction.
+    const auto incompressible =
+        a502::Compressibility::fromAngles(0.0, 0.0, 0.0);
+    const auto m0 =
+        a502::buildLeftHandBoundaryOption(11, incompressible, normal);
+    REQUIRE(m0.supported);
+    CHECK(m0.coefficients.cu == Catch::Approx(1.0).epsilon(1e-14));
+    CHECK(m0.coefficients.tu.isZero(1e-14));
+}
+
 TEST_CASE("matching: shared full edge", "[matching]") {
     auto makeGrid = [](double y0, const char* name) {
         a502::Network net;

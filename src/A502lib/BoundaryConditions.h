@@ -73,6 +73,23 @@ BoundaryConditionCoefficients standardNormalMassFlux(
     double cu, double cl, const Eigen::Vector3d& normal,
     const Eigen::Vector3d& freestream);
 
+// Result of the bcopt() left-hand-side dispatch (A502 nlopt).  supported is
+// false for options that need input coefficients (nlopt=1), a Fortran-coded
+// routine (10), material data (18..20), or are not ported (21..25).
+// hasCondition is false only for nlopt=0, which means "no boundary
+// condition".  Velocity options (11..14) use the default $compressibility
+// axis-angle constants al1=al2=0, enx1=enx2=1; the corresponding input
+// options are not parsed yet.
+struct LeftHandBoundaryOption {
+    BoundaryConditionCoefficients coefficients;
+    bool supported{false};
+    bool hasCondition{false};
+};
+
+LeftHandBoundaryOption buildLeftHandBoundaryOption(
+    int nlopt, const Compressibility& flow,
+    const Eigen::Vector3d& normal);
+
 struct BoundarySystemRows {
     int nRows{0};
     int nSource{0};
