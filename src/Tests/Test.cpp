@@ -4129,6 +4129,127 @@ TEST_CASE("supersonic near-field: source kernel", "[nearfield]") {
     CHECK(cubic.doublet.allFinite());
 }
 
+TEST_CASE("supersonic near-field: superinclined aicsup", "[nearfield]") {
+    std::array<Eigen::Vector3d, 4> v;
+    v[0] = Eigen::Vector3d(0, 0, 0);
+    v[1] = Eigen::Vector3d(1, 0, 0);
+    v[2] = Eigen::Vector3d(0, 1, 0);
+    v[3] = v[0];
+
+    const Eigen::Vector3d fieldPoint(0, 0, 10);
+    const auto out = a502::supersonicSuperinclinedSubpanelInfluence(
+        v, 4, 4, 3, fieldPoint, 1.0, 6, 1.0);
+    REQUIRE(out.valid);
+    CHECK(out.source.allFinite());
+    CHECK(out.doublet.allFinite());
+
+    // aicsup's constant source potential must equal
+    //   -1/(2*pi) * integral_S 1/sqrt(x^2-rho^2) dA.
+    static const double gp[16] = {
+        -0.9894009349916499, -0.9445750230732326, -0.8656312023878318,
+        -0.7554044083550030, -0.6178762444026438, -0.4580167776572274,
+        -0.2816035507792589, -0.0950125098376374,  0.0950125098376374,
+         0.2816035507792589,  0.4580167776572274,  0.6178762444026438,
+         0.7554044083550030,  0.8656312023878318,  0.9445750230732326,
+         0.9894009349916499};
+    static const double gw[16] = {
+        0.0271524594117541, 0.0622535239386479, 0.0951585116824928,
+        0.1246289712555339, 0.1495959888165767, 0.1691565193950025,
+        0.1826034150449236, 0.1894506104550685, 0.1894506104550685,
+        0.1826034150449236, 0.1691565193950025, 0.1495959888165767,
+        0.1246289712555339, 0.0951585116824928, 0.0622535239386479,
+        0.0271524594117541};
+    double integral = 0.0;
+    for (int a = 0; a < 16; ++a) {
+        const double r = 0.5 * (gp[a] + 1.0);
+        const double wr = 0.5 * gw[a];
+        for (int b = 0; b < 16; ++b) {
+            const double s = 0.5 * (gp[b] + 1.0);
+            const double ws = 0.5 * gw[b];
+            const double xi = r;
+            const double eta = s * (1.0 - r);
+            integral += wr * ws * (1.0 - r) /
+                        std::sqrt(100.0 - xi * xi - eta * eta);
+        }
+    }
+    const double pi = 3.14159265358979323846;
+    CHECK(out.source(0, 0) ==
+          Catch::Approx(-integral / (2.0 * pi)).epsilon(1e-10));
+
+    // The constant doublet potential is the normal derivative of the source
+    // kernel: -1/(2*pi) * integral x/(x^2-rho^2)^(3/2) dA.
+    double normalIntegral = 0.0;
+    for (int a = 0; a < 16; ++a) {
+        const double r = 0.5 * (gp[a] + 1.0);
+        const double wr = 0.5 * gw[a];
+        for (int b = 0; b < 16; ++b) {
+            const double s = 0.5 * (gp[b] + 1.0);
+            const double ws = 0.5 * gw[b];
+            const double xi = r;
+            const double eta = s * (1.0 - r);
+            const double cone = 100.0 - xi * xi - eta * eta;
+            normalIntegral +=
+                wr * ws * (1.0 - r) * 10.0 / (cone * std::sqrt(cone));
+        }
+    }
+    CHECK(out.doublet(0, 0) ==
+          Catch::Approx(-normalIntegral / (2.0 * pi)).epsilon(1e-10));
+
+    // btinv scales only the source aics.
+    const auto scaled = a502::supersonicSuperinclinedSubpanelInfluence(
+        v, 4, 4, 3, fieldPoint, 2.0, 6, 1.0);
+    REQUIRE(scaled.valid);
+    CHECK(scaled.source(0, 0) ==
+          Catch::Approx(2.0 * out.source(0, 0)).epsilon(1e-12));
+    CHECK(scaled.doublet(0, 0) ==
+          Catch::Approx(out.doublet(0, 0)).epsilon(1e-12));
+
+    // Source-only request: no doublet rows, same source.
+    const auto sourceOnly = a502::supersonicSuperinclinedSubpanelInfluence(
+        v, 4, 4, 1, fieldPoint, 1.0, 6, 1.0);
+    REQUIRE(sourceOnly.valid);
+    CHECK(sourceOnly.doublet.isZero(0.0));
+    CHECK((sourceOnly.source - out.source).norm() < 1e-12);
+
+    // Field on the upstream side (x < 0) gives a null integral.
+    const auto upstream = a502::supersonicSuperinclinedSubpanelInfluence(
+        v, 4, 4, 3, Eigen::Vector3d(0, 0, -10), 1.0, 6, 1.0);
+    REQUIRE(upstream.valid);
+    CHECK(upstream.source.isZero(0.0));
+    CHECK(upstream.doublet.isZero(0.0));
+
+    // Mirroring field and normal sign keeps the source potential and flips
+    // the doublet potential sign.
+    const auto mirrored = a502::supersonicSuperinclinedSubpanelInfluence(
+        v, 4, 4, 3, Eigen::Vector3d(0, 0, -10), 1.0, 6, -1.0);
+    REQUIRE(mirrored.valid);
+    // supspi multiplies the source vx row and the doublet ph/vy/vz rows
+    // by sgnx, so exactly these rows flip sign.
+    CHECK((mirrored.source.topRows<3>() -
+           out.source.topRows<3>()).norm() < 1e-12);
+    CHECK((mirrored.source.row(3) + out.source.row(3)).norm() < 1e-12);
+    CHECK((mirrored.doublet.topRows<3>() +
+           out.doublet.topRows<3>()).norm() < 1e-12);
+    CHECK((mirrored.doublet.row(3) -
+           out.doublet.row(3)).norm() < 1e-12);
+    CHECK(mirrored.doublet(0, 0) ==
+          Catch::Approx(-out.doublet(0, 0)).epsilon(1e-12));
+
+    // Clockwise corner order is a null integral in aicsup.
+    std::array<Eigen::Vector3d, 4> clockwise = v;
+    std::swap(clockwise[1], clockwise[2]);
+    const auto reversed = a502::supersonicSuperinclinedSubpanelInfluence(
+        clockwise, 4, 4, 3, fieldPoint, 1.0, 6, 1.0);
+    REQUIRE(reversed.valid);
+    CHECK(reversed.source.isZero(0.0));
+
+    const auto cubic = a502::supersonicSuperinclinedSubpanelInfluence(
+        v, 4, 4, 3, fieldPoint, 1.0, 10, 1.0);
+    REQUIRE(cubic.valid);
+    CHECK(cubic.source.allFinite());
+    CHECK(cubic.doublet.allFinite());
+}
+
 TEST_CASE("supersonic near-field: kernel dispatch", "[nearfield]") {
     const auto flow =
         a502::Compressibility::fromAngles(1.2, 0.0, 0.0);
@@ -4149,7 +4270,7 @@ TEST_CASE("supersonic near-field: kernel dispatch", "[nearfield]") {
     CHECK(influence.doublet.allFinite());
 
     // Panel in the y-z plane (normal along the flow): superinclined, which
-    // needs the not-yet-ported supspi() and must be rejected.
+    // now goes through supspi()/aicsup().
     const std::vector<double> cross = {
         0.0, 0.0, 0.0, 0.0, 1.0, 0.0,
         0.0, 0.0, 1.0, 0.0, 1.0, 1.0};
@@ -4158,7 +4279,10 @@ TEST_CASE("supersonic near-field: kernel dispatch", "[nearfield]") {
     REQUIRE_FALSE(super.degenerate);
     a502::applyCompressibleFrames(super, flow);
     REQUIRE(super.subpanels[0].inclination == -1);
-    CHECK_FALSE(a502::panelNearFieldInfluence(
-                    super, flow, Eigen::Vector3d(0.5, 0.5, 0.5))
-                    .valid);
+    const auto superInfluence = a502::panelNearFieldInfluence(
+        super, flow, Eigen::Vector3d(0.5, 0.5, 0.5));
+    REQUIRE(superInfluence.valid);
+    CHECK(superInfluence.source.allFinite());
+    CHECK(superInfluence.doublet.allFinite());
 }
+

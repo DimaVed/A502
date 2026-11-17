@@ -50,6 +50,16 @@ SupersonicSubpanelInfluence supersonicSubpanelInfluence(
     const std::array<Eigen::Vector3d, 4>& vertices, int ns, int ics, int its,
     const Eigen::Vector3d& fieldPoint, double aj, int nf = 6);
 
+// Supersonic superinclined subpanel influence (supspi + aicsup).  sgnx is
+// the sign of the freestream component along the subpanel normal (A502
+// /norx/ sgnx).  The returned row layout matches nftpic's expectation:
+// row 0 is the potential and rows 1..3 are the local velocity components
+// after supspi's component rearrangement.
+SupersonicSubpanelInfluence supersonicSuperinclinedSubpanelInfluence(
+    const std::array<Eigen::Vector3d, 4>& vertices, int ns, int ics, int its,
+    const Eigen::Vector3d& fieldPoint, double aj, int nf = 6,
+    double sgnx = 1.0);
+
 // Near-field influence of one panel on a field point, summed over its eight
 // triangular subpanels.  Rows are potential and global x,y,z velocity; source
 // columns are sigma1..sigma4,sigma9 and doublet columns are mu1..mu9.

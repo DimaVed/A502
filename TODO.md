@@ -20,7 +20,8 @@
 - PIC:
   - классификация `influ`;
   - subsonic near-field `subsbi` по подпанелям;
-  - supersonic subinclined `supsbi` и dispatch `nftpic`;
+  - supersonic subinclined `supsbi`, superinclined `supspi`/`aicsup`
+    и dispatch `nftpic` по `iin`;
   - сборка влияния панели и сети;
   - промежуточное `qffcal`-приближение.
 - Глобальные AIC-строки, в том числе по нескольким сетям.
@@ -87,8 +88,9 @@
 - PIC не завершён:
   - нет far-field `ffpic`;
   - нет полного `qnfcal`;
-  - `supsbi` (supersonic subinclined) портирован и проверен численным
-    интегрированием; нет `supspi`/`aicsup` (superinclined);
+  - supersonic near-field (`supsbi` и `supspi`/`aicsup`) портирован и
+    проверен численным интегрированием ядра; нет far-field (`ffpic`) и
+    full `qnfcal`;
   - near-field используется для всех расстояний (медленно и хуже
     обусловлено).
 - Материалы парсятся и дают `Cp`-ratios, но ещё не подключены к AIC/BC
@@ -162,7 +164,7 @@
 2. `qnfcal` для intermediate/quasi-near.
 3. Supersonic:
    - `supsbi` — готово;
-   - `supspi`/`aicsup` — осталось;
+   - `supspi`/`aicsup` — готово;
    - `nftpic` dispatch по `iin` — готово.
 4. Диспетчеризация по `influenceLevel` вместо near-field везде.
 5. Сравнение far/intermediate/near на одних и тех же точках.
@@ -206,7 +208,9 @@
 - [ ] Портировать `qnfcal`.
 - [x] Портировать `supsbi` и диспетчеризацию `nftpic` по `iin`
   (supersonic subinclined); сверено с численным интегралом ядра.
-- [ ] Портировать `supspi`/`aicsup` (supersonic superinclined).
+- [x] Портировать `supspi`/`aicsup` (supersonic superinclined).
+  Source potential сверен с численным интегралом ядра; знаки sgnx/порядок
+  компонент повторяют supspi.
 - [x] Подключить solver к `AeroModel`.
   Сделан ограниченный `solveFlow()` (single-network source/doublet-only);
   полный composite-путь ждёт A502 edge/corner-условий и elimination.
