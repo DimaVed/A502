@@ -41,4 +41,18 @@ GlobalInfluence evaluateGlobalNearFieldInfluence(
     const Eigen::Vector3d& fieldPoint,
     const GlobalSingularityLayout& layout);
 
+struct GlobalAic {
+    int nControlPoints{0};
+    int nSource{0};
+    int nDoublet{0};
+    Eigen::MatrixXd source;
+    Eigen::MatrixXd doublet;
+    bool valid{false};
+};
+
+GlobalAic buildGlobalNearFieldAic(
+    const std::vector<Network>& networks, const Compressibility& flow,
+    const GlobalSingularityLayout& layout,
+    const std::vector<Eigen::Vector3d>& fieldPoints);
+
 } // namespace a502

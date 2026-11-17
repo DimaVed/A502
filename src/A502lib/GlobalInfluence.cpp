@@ -69,4 +69,34 @@ GlobalInfluence evaluateGlobalNearFieldInfluence(
     return out;
 }
 
+GlobalAic buildGlobalNearFieldAic(
+    const std::vector<Network>& networks, const Compressibility& flow,
+    const GlobalSingularityLayout& layout,
+    const std::vector<Eigen::Vector3d>& fieldPoints) {
+    GlobalAic out;
+    if (fieldPoints.empty() || layout.totalSource <= 0 ||
+        layout.totalDoublet <= 0)
+        return out;
+
+    out.nControlPoints = static_cast<int>(fieldPoints.size());
+    out.nSource = layout.totalSource;
+    out.nDoublet = layout.totalDoublet;
+    out.source = Eigen::MatrixXd::Zero(4 * out.nControlPoints, out.nSource);
+    out.doublet = Eigen::MatrixXd::Zero(4 * out.nControlPoints, out.nDoublet);
+
+    for (int k = 0; k < out.nControlPoints; ++k) {
+        const GlobalInfluence row = evaluateGlobalNearFieldInfluence(
+            networks, flow, fieldPoints[static_cast<std::size_t>(k)],
+            layout);
+        if (!row.valid)
+            return GlobalAic{};
+
+        out.source.block(4 * k, 0, 4, out.nSource) = row.source;
+        out.doublet.block(4 * k, 0, 4, out.nDoublet) = row.doublet;
+    }
+
+    out.valid = true;
+    return out;
+}
+
 } // namespace a502

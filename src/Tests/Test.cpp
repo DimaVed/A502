@@ -980,6 +980,22 @@ TEST_CASE("global influence: two networks and column offsets",
           1e-12);
     CHECK((global.doublet.block(0, 81, 4, 81) - local1.doublet).norm() <
           1e-12);
+
+    const std::vector<Eigen::Vector3d> fieldPoints = {
+        x, Eigen::Vector3d(5.0, 5.0, 2.0)};
+    const auto aic =
+        a502::buildGlobalNearFieldAic(networks, flow, layout, fieldPoints);
+    REQUIRE(aic.valid);
+    CHECK(aic.nControlPoints == 2);
+    CHECK(aic.nSource == 98);
+    CHECK(aic.nDoublet == 162);
+    REQUIRE(aic.source.rows() == 8);
+    REQUIRE(aic.doublet.rows() == 8);
+    CHECK((aic.source.block(0, 0, 4, 98) - global.source).norm() < 1e-12);
+    CHECK((aic.doublet.block(0, 0, 4, 162) - global.doublet).norm() <
+          1e-12);
+    CHECK(aic.source.allFinite());
+    CHECK(aic.doublet.allFinite());
 }
 
 TEST_CASE("control points: single square network", "[controlpoints]") {
