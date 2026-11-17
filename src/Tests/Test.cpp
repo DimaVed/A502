@@ -11,6 +11,7 @@
 #include "Compressibility.h"
 #include "Influence.h"
 #include "NearField.h"
+#include "NetworkInfluence.h"
 #include "PanelGeometry.h"
 #include "PanelParameters.h"
 #include "OuterSplines.h"
@@ -690,6 +691,115 @@ TEST_CASE("subsonic near-field influence: whole panel", "[nearfield]") {
           Catch::Approx(constantSourcePotential).epsilon(1e-7));
     CHECK(intermediate.doublet(0, 0) ==
           Catch::Approx(constantDoubletPotential).epsilon(1e-7));
+}
+
+TEST_CASE("network influence: outer splines and near-field PIC",
+          "[networkinfluence]") {
+    a502::Network net;
+    net.netname = "grid";
+    net.nm = 8;
+    net.nn = 8;
+    for (int n = 0; n < 8; ++n) {
+        for (int m = 0; m < 8; ++m) {
+            net.coordinates.push_back(static_cast<double>(m));
+            net.coordinates.push_back(static_cast<double>(n));
+            net.coordinates.push_back(0.0);
+        }
+    }
+
+    const auto flow = a502::Compressibility::fromAngles(0.0, 0.0, 0.0);
+    const auto layout = a502::buildNetworkSingularityLayout(net);
+    REQUIRE(layout.source.count == 49);
+    REQUIRE(layout.doublet.count == 81);
+
+    const Eigen::Vector3d x(3.5, 3.5, 1.0);
+    const auto infl =
+        a502::evaluateNetworkNearFieldInfluence(net, flow, x, layout);
+    REQUIRE(infl.valid);
+    REQUIRE(infl.source.cols() == 49);
+    REQUIRE(infl.doublet.cols() == 81);
+
+    auto sigma = [](const Eigen::Vector3d& p) {
+        return 1.0 + 0.2 * p.x() - 0.3 * p.y();
+    };
+    auto mu = [](const Eigen::Vector3d& p) {
+        return 1.0 + 2.0 * p.x() + 3.0 * p.y() +
+               4.0 * p.x() * p.x() / 2.0 + 5.0 * p.x() * p.y() +
+               6.0 * p.y() * p.y() / 2.0;
+    };
+
+    Eigen::VectorXd sourceValues(layout.source.count);
+    for (int k = 0; k < layout.source.count; ++k)
+        sourceValues(k) = sigma(
+            layout.source.location[static_cast<std::size_t>(k)]);
+
+    Eigen::VectorXd doubletValues(layout.doublet.count);
+    for (int k = 0; k < layout.doublet.count; ++k)
+        doubletValues(k) = mu(
+            layout.doublet.location[static_cast<std::size_t>(k)]);
+
+    // Direct panel-by-panel Gauss-Legendre quadrature.
+    constexpr double nodes[8] = {
+        -0.9602898564975363, -0.7966664774136267,
+        -0.5255324099163290, -0.1834346424956498,
+         0.1834346424956498,  0.5255324099163290,
+         0.7966664774136267,  0.9602898564975363};
+    constexpr double weights[8] = {
+        0.1012285362903763, 0.2223810344533745,
+        0.3137066458778873, 0.3626837833783620,
+        0.3626837833783620, 0.3137066458778873,
+        0.2223810344533745, 0.1012285362903763};
+    constexpr double pi = 3.14159265358979323846;
+    const double fourPi = 4.0 * pi;
+
+    double sourcePotential = 0.0;
+    double sourceVx = 0.0;
+    double sourceVy = 0.0;
+    double sourceVz = 0.0;
+    double doubletPotential = 0.0;
+
+    const auto basePanel =
+        a502::buildPanelGeometry(net.coordinates, 8, 8, 0, 0);
+    const double normalZ = basePanel.normal.z();
+
+    for (int pj = 0; pj < 7; ++pj) {
+        for (int pi = 0; pi < 7; ++pi) {
+            for (int j = 0; j < 8; ++j) {
+                for (int i = 0; i < 8; ++i) {
+                    const double xp =
+                        pi + 0.5 * (1.0 + nodes[i]);
+                    const double yp =
+                        pj + 0.5 * (1.0 + nodes[j]);
+                    const double w = 0.25 * weights[i] * weights[j];
+                    const Eigen::Vector3d p(xp, yp, 0.0);
+                    const double rx = x.x() - xp;
+                    const double ry = x.y() - yp;
+                    const double rz = x.z();
+                    const double r2 = rx * rx + ry * ry + rz * rz;
+                    const double r = std::sqrt(r2);
+                    const double s = sigma(p);
+                    const double m = mu(p);
+                    sourcePotential -= w * s / (fourPi * r);
+                    sourceVx += w * s * rx / (fourPi * r2 * r);
+                    sourceVy += w * s * ry / (fourPi * r2 * r);
+                    sourceVz += w * s * rz / (fourPi * r2 * r);
+                    doubletPotential +=
+                        w * m * normalZ * rz / (fourPi * r2 * r);
+                }
+            }
+        }
+    }
+
+    const Eigen::Vector4d sourceHit = infl.source * sourceValues;
+    CHECK(sourceHit(0) ==
+          Catch::Approx(sourcePotential).epsilon(1e-6));
+    CHECK(sourceHit(1) == Catch::Approx(sourceVx).epsilon(1e-6));
+    CHECK(sourceHit(2) == Catch::Approx(sourceVy).epsilon(1e-6));
+    CHECK(sourceHit(3) == Catch::Approx(sourceVz).epsilon(1e-6));
+
+    const double doubletHit = (infl.doublet * doubletValues)(0);
+    CHECK(doubletHit ==
+          Catch::Approx(doubletPotential).epsilon(1e-6));
 }
 
 TEST_CASE("control points: single square network", "[controlpoints]") {
