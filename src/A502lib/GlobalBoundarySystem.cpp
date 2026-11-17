@@ -167,4 +167,36 @@ GlobalSystemSolution solveGlobalBoundarySystem(
     return out;
 }
 
+GlobalParameterValues expandGlobalSolution(
+    const GlobalSystemSolution& solution,
+    const GlobalSingularityLayout& layout) {
+    GlobalParameterValues out;
+    if (!solution.valid ||
+        solution.unknowns.size() !=
+            layout.activeSource + layout.activeDoublet)
+        return out;
+
+    out.source = Eigen::VectorXd::Zero(layout.totalSource);
+    out.doublet = Eigen::VectorXd::Zero(layout.totalDoublet);
+    for (std::size_t k = 0; k < layout.network.size(); ++k) {
+        const NetworkSingularityLayout& netLayout = layout.network[k];
+        if (netLayout.hasSource) {
+            const int count = netLayout.source.count;
+            out.source.segment(layout.sourceOffset[k], count) =
+                solution.unknowns.segment(
+                    layout.activeSourceOffset[k], count);
+        }
+        if (netLayout.hasDoublet) {
+            const int count = netLayout.doublet.count;
+            out.doublet.segment(layout.doubletOffset[k], count) =
+                solution.unknowns.segment(
+                    layout.activeSource + layout.activeDoubletOffset[k],
+                    count);
+        }
+    }
+
+    out.valid = true;
+    return out;
+}
+
 } // namespace a502

@@ -1394,6 +1394,14 @@ TEST_CASE("global boundary system: active columns and matching rows",
     CHECK(solution.unknowns.norm() > 1e-6);
     CHECK(solution.residualNorm < 1e-3);
 
+    const auto values =
+        a502::expandGlobalSolution(solution, doubletLayout);
+    REQUIRE(values.valid);
+    REQUIRE(values.source.size() == 9);
+    CHECK(values.source.isZero(0.0));
+    REQUIRE(values.doublet.size() == 25);
+    CHECK((values.doublet - solution.unknowns).norm() < 1e-12);
+
     // Solver sanity check with an exactly solvable system.
     a502::GlobalBoundarySystem exact;
     exact.nRows = 3;

@@ -48,4 +48,16 @@ struct GlobalSystemSolution {
 GlobalSystemSolution solveGlobalBoundarySystem(
     const GlobalBoundarySystem& system);
 
+struct GlobalParameterValues {
+    Eigen::VectorXd source;  // totalSource, zero for inactive networks
+    Eigen::VectorXd doublet; // totalDoublet
+    bool valid{false};
+};
+
+// Scatter the active unknown vector back into full per-network source and
+// doublet parameter vectors.
+GlobalParameterValues expandGlobalSolution(
+    const GlobalSystemSolution& solution,
+    const GlobalSingularityLayout& layout);
+
 } // namespace a502
