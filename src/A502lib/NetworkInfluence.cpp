@@ -11,6 +11,59 @@
 
 namespace a502 {
 
+NetworkSingularityTypes networkSingularityTypes(int kt) {
+    NetworkSingularityTypes out;
+    switch (kt) {
+    case 6:  // off-body sources
+    case 7:  // source alone, mass flux
+    case 17: // source alone, velocity b.c.
+        out.sourceType = 1;
+        out.doubletType = 0;
+        break;
+    case 12: // thin wing, doublets alone
+    case 21: // doublets alone
+    case 22:
+        out.sourceType = 0;
+        out.doubletType = 12;
+        break;
+    case 18:
+        out.sourceType = 0;
+        out.doubletType = 18;
+        break;
+    case 19: // type 6 design wake
+        out.sourceType = 0;
+        out.doubletType = 6;
+        break;
+    case 20:
+        out.sourceType = 0;
+        out.doubletType = 20;
+        break;
+    case 13:
+        out.sourceType = 1;
+        out.doubletType = 12;
+        break;
+    case 1:
+    case 3:
+    case 4:
+    case 5:
+    case 8:
+    case 9:
+    case 11:
+    case 14:
+    case 15:
+    case 16:
+        out.sourceType = 1;
+        out.doubletType = 12;
+        break;
+    default:
+        // Unknown/arbitrary network type: keep both active.
+        out.sourceType = 1;
+        out.doubletType = 12;
+        break;
+    }
+    return out;
+}
+
 NetworkSingularityLayout buildNetworkSingularityLayout(
     const Network& network) {
     NetworkSingularityLayout out;
@@ -18,6 +71,10 @@ NetworkSingularityLayout buildNetworkSingularityLayout(
     const int nn = network.nn;
     if (nm < 2 || nn < 2)
         return out;
+
+    out.types = networkSingularityTypes(network.kt);
+    out.hasSource = out.types.sourceType != 0;
+    out.hasDoublet = out.types.doubletType != 0;
 
     const std::size_t nPoints =
         static_cast<std::size_t>(nm) * static_cast<std::size_t>(nn);

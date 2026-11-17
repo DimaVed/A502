@@ -930,6 +930,48 @@ TEST_CASE("network AIC: rows at all control points", "[networkinfluence]") {
     CHECK(aic.doublet.allFinite());
 }
 
+TEST_CASE("network singularity types follow kt", "[networkinfluence]") {
+    CHECK(a502::networkSingularityTypes(1).sourceType == 1);
+    CHECK(a502::networkSingularityTypes(1).doubletType == 12);
+    CHECK(a502::networkSingularityTypes(7).sourceType == 1);
+    CHECK(a502::networkSingularityTypes(7).doubletType == 0);
+    CHECK(a502::networkSingularityTypes(12).sourceType == 0);
+    CHECK(a502::networkSingularityTypes(12).doubletType == 12);
+    CHECK(a502::networkSingularityTypes(18).doubletType == 18);
+    CHECK(a502::networkSingularityTypes(19).doubletType == 6);
+    CHECK(a502::networkSingularityTypes(20).doubletType == 20);
+
+    a502::Network net;
+    net.netname = "grid";
+    net.nm = 3;
+    net.nn = 3;
+    for (int n = 0; n < 3; ++n) {
+        for (int m = 0; m < 3; ++m) {
+            net.coordinates.push_back(static_cast<double>(m));
+            net.coordinates.push_back(static_cast<double>(n));
+            net.coordinates.push_back(0.0);
+        }
+    }
+
+    net.kt = 12;
+    const auto doubletsOnly =
+        a502::buildNetworkSingularityLayout(net);
+    CHECK_FALSE(doubletsOnly.hasSource);
+    CHECK(doubletsOnly.hasDoublet);
+
+    net.kt = 7;
+    const auto sourceOnly =
+        a502::buildNetworkSingularityLayout(net);
+    CHECK(sourceOnly.hasSource);
+    CHECK_FALSE(sourceOnly.hasDoublet);
+
+    net.kt = 1;
+    const auto composite =
+        a502::buildNetworkSingularityLayout(net);
+    CHECK(composite.hasSource);
+    CHECK(composite.hasDoublet);
+}
+
 TEST_CASE("global influence: two networks and column offsets",
           "[networkinfluence]") {
     a502::Network net;

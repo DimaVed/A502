@@ -36,9 +36,21 @@ struct NetworkSourceParameters {
     }
 };
 
+struct NetworkSingularityTypes {
+    int sourceType{0};  // A502 nts
+    int doubletType{0}; // A502 ntd
+};
+
+// Network-type default from the contrl/kt dispatch table.  Unknown kt codes
+// keep both singularity types active.
+NetworkSingularityTypes networkSingularityTypes(int kt);
+
 struct NetworkSingularityLayout {
     NetworkSourceParameters source;
     NetworkDoubletParameters doublet;
+    NetworkSingularityTypes types;
+    bool hasSource{true};
+    bool hasDoublet{true};
 };
 
 NetworkSingularityLayout buildNetworkSingularityLayout(
