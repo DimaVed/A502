@@ -693,6 +693,62 @@ TEST_CASE("subsonic near-field influence: whole panel", "[nearfield]") {
           Catch::Approx(constantDoubletPotential).epsilon(1e-7));
 }
 
+TEST_CASE("subsonic near-field influence: collapsed-edge panel",
+          "[nearfield]") {
+    const std::vector<double> coords = {
+        0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 1.0, 1.0, 0.0};
+    const auto flow = a502::Compressibility::fromAngles(0.0, 0.0, 0.0);
+    auto panel = a502::buildPanelGeometry(coords, 2, 2, 0, 0);
+    REQUIRE_FALSE(panel.degenerate);
+    REQUIRE(panel.collapsedEdge == 1);
+    a502::applyCompressibleFrames(panel, flow);
+
+    const Eigen::Vector3d x(0.5, 0.25, 1.0);
+    const auto infl =
+        a502::subsonicPanelNearFieldInfluence(panel, flow, x, 6);
+    REQUIRE(infl.valid);
+
+    // Triangle (0,0), (1,0), (1,1): x=u, y=u*v with Jacobian u.
+    constexpr double nodes[8] = {
+        -0.9602898564975363, -0.7966664774136267,
+        -0.5255324099163290, -0.1834346424956498,
+         0.1834346424956498,  0.5255324099163290,
+         0.7966664774136267,  0.9602898564975363};
+    constexpr double weights[8] = {
+        0.1012285362903763, 0.2223810344533745,
+        0.3137066458778873, 0.3626837833783620,
+        0.3626837833783620, 0.3137066458778873,
+        0.2223810344533745, 0.1012285362903763};
+    constexpr double pi = 3.14159265358979323846;
+    const double fourPi = 4.0 * pi;
+
+    double sourcePotential = 0.0;
+    double doubletPotential = 0.0;
+    for (int j = 0; j < 8; ++j) {
+        for (int i = 0; i < 8; ++i) {
+            const double u = 0.5 * (1.0 + nodes[i]);
+            const double v = 0.5 * (1.0 + nodes[j]);
+            const double xp = u;
+            const double yp = u * v;
+            const double w = 0.25 * weights[i] * weights[j] * u;
+            const double rx = x.x() - xp;
+            const double ry = x.y() - yp;
+            const double rz = x.z();
+            const double r2 = rx * rx + ry * ry + rz * rz;
+            const double r = std::sqrt(r2);
+            sourcePotential -= w / (fourPi * r);
+            doubletPotential +=
+                w * panel.normal.z() * rz / (fourPi * r2 * r);
+        }
+    }
+
+    CHECK(infl.source.row(0).dot(a502::PanelSourceValues::Ones()) ==
+          Catch::Approx(sourcePotential).epsilon(1e-7));
+    CHECK(infl.doublet.row(0).dot(a502::PanelDoubletValues::Ones()) ==
+          Catch::Approx(doubletPotential).epsilon(1e-7));
+}
+
 TEST_CASE("network influence: outer splines and near-field PIC",
           "[networkinfluence]") {
     a502::Network net;
