@@ -1675,6 +1675,72 @@ TEST_CASE("pressure coefficients: cpcal formulas", "[flowsolution]") {
               a502::CpFormula::Linear) == 0.0);
 }
 
+TEST_CASE("right-hand side options follow bcopt", "[boundaryconditions]") {
+    const auto flow = a502::Compressibility::fromAngles(0.6, 4.0, 0.0);
+    const Eigen::Vector3d normal =
+        Eigen::Vector3d(0.2, -0.3, 0.9).normalized();
+    const Eigen::Vector3d controlPoint(2.0, -1.0, 3.0);
+    const Eigen::Vector3d reference(0.5, 0.25, -1.0);
+
+    auto rhs = [&](int nropt) {
+        return a502::buildBoundaryRightHandSide(
+            nropt, flow, normal, controlPoint, reference);
+    };
+
+    const auto none = rhs(0);
+    CHECK(none.supported);
+    CHECK_FALSE(none.hasValue);
+
+    const auto zero = rhs(1);
+    CHECK(zero.supported);
+    CHECK(zero.hasValue);
+    CHECK(zero.value == 0.0);
+
+    const double normalDotFreestream = normal.dot(flow.compd);
+    const auto minusNormal = rhs(2);
+    CHECK(minusNormal.supported);
+    CHECK(minusNormal.value ==
+          Catch::Approx(-normalDotFreestream).epsilon(1e-14));
+    CHECK(rhs(-2).value ==
+          Catch::Approx(-normalDotFreestream).epsilon(1e-14));
+
+    for (int nropt : {5, 6, 7}) {
+        INFO("nropt " << nropt);
+        const auto plusNormal = rhs(nropt);
+        CHECK(plusNormal.supported);
+        CHECK(plusNormal.value ==
+              Catch::Approx(normalDotFreestream).epsilon(1e-14));
+    }
+
+    // nropt=3: negative dot product of the compressibility-scaled
+    // co-position vector with the freestream.
+    auto scale = [&](double bs, const Eigen::Vector3d& v) {
+        const double f = (bs - 1.0) * v.dot(flow.compd) /
+                         flow.compd.squaredNorm();
+        return v + f * flow.compd;
+    };
+    const Eigen::Vector3d offset = controlPoint - reference;
+    const Eigen::Vector3d scaled =
+        scale(1.0 / flow.betams, offset);
+    const auto scaledPosition = rhs(3);
+    CHECK(scaledPosition.supported);
+    CHECK(scaledPosition.value ==
+          Catch::Approx(-scaled.dot(flow.compd)).epsilon(1e-12));
+
+    // nropt=8: negative dot product of the c.p. offset with the freestream.
+    const auto position = rhs(8);
+    CHECK(position.supported);
+    CHECK(position.value ==
+          Catch::Approx(-offset.dot(flow.compd)).epsilon(1e-12));
+
+    for (int nropt : {4, 9, 10}) {
+        INFO("nropt " << nropt);
+        const auto unsupported = rhs(nropt);
+        CHECK_FALSE(unsupported.supported);
+        CHECK_FALSE(unsupported.hasValue);
+    }
+}
+
 TEST_CASE("matching: shared full edge", "[matching]") {
     auto makeGrid = [](double y0, const char* name) {
         a502::Network net;

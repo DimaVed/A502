@@ -73,6 +73,22 @@ BoundaryConditionCoefficients standardNormalMassFlux(
     double cu, double cl, const Eigen::Vector3d& normal,
     const Eigen::Vector3d& freestream);
 
+// Port of the bcopt() right-hand-side dispatch.  reference is the A502
+// zmctr used by nropt=3 and 8 (zero when the condition is not tied to a
+// region surface).  nropt=0 produces no right-hand side; 1 is zero;
+// 4 (Fortran-coded cbet) and 9 (input value) are not ported.
+struct BoundaryRightHandSide {
+    double value{0.0};
+    bool supported{false};
+    bool hasValue{false};
+};
+
+BoundaryRightHandSide buildBoundaryRightHandSide(
+    int nropt, const Compressibility& flow,
+    const Eigen::Vector3d& normal,
+    const Eigen::Vector3d& controlPoint,
+    const Eigen::Vector3d& reference = Eigen::Vector3d::Zero());
+
 // Result of the bcopt() left-hand-side dispatch (A502 nlopt).  supported is
 // false for options that need input coefficients (nlopt=1), a Fortran-coded
 // routine (10), material data (18..20), or are not ported (21..25).

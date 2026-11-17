@@ -378,6 +378,49 @@ BoundaryConditionCoefficients standardNormalMassFlux(
     return out;
 }
 
+BoundaryRightHandSide buildBoundaryRightHandSide(
+    int nropt, const Compressibility& flow,
+    const Eigen::Vector3d& normal,
+    const Eigen::Vector3d& controlPoint,
+    const Eigen::Vector3d& reference) {
+    BoundaryRightHandSide out;
+    const int option = std::abs(nropt);
+    switch (option) {
+    case 0:
+        out.supported = true;
+        out.hasValue = false;
+        return out;
+    case 1: // right-hand side explicitly zero
+        out.value = 0.0;
+        break;
+    case 2: // minus freestream normal component
+        out.value = -normal.dot(flow.compd);
+        break;
+    case 3: { // scaled co-position vector dotted into freestream
+        const Eigen::Vector3d offset = controlPoint - reference;
+        const Eigen::Vector3d scaled = compressibilityScale(
+            1.0 / flow.betams, flow.compd, offset);
+        out.value = -scaled.dot(flow.compd);
+        break;
+    }
+    case 5:
+    case 6:
+    case 7: // freestream normal component
+        out.value = normal.dot(flow.compd);
+        break;
+    case 8: // co-position vector dotted into freestream
+        out.value = -(controlPoint - reference).dot(flow.compd);
+        break;
+    default:
+        // nropt=4 uses the Fortran-coded cbet(); nropt=9 keeps the input
+        // value.  Neither is ported.
+        return out;
+    }
+    out.supported = true;
+    out.hasValue = true;
+    return out;
+}
+
 LeftHandBoundaryOption buildLeftHandBoundaryOption(
     int nlopt, const Compressibility& flow,
     const Eigen::Vector3d& normal) {
