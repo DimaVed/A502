@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "AeroModel.h"
+#include "Compressibility.h"
 #include "PanelGeometry.h"
 
 #include <cmath>
@@ -277,6 +278,111 @@ TEST_CASE("panel geometry: sample decks", "[geometry]") {
                     subArea += s.area;
                 CHECK(subArea ==
                       Catch::Approx(pan.geom.area).epsilon(1e-10));
+            }
+        }
+    }
+}
+
+
+TEST_CASE("compressibility: freestream metric", "[compressibility]") {
+    SECTION("M = 0") {
+        const auto c = a502::Compressibility::fromAngles(0.0, 0.0, 0.0);
+        CHECK(c.betams == Catch::Approx(1.0));
+        CHECK(c.abetms == Catch::Approx(1.0));
+        CHECK(c.betam == Catch::Approx(1.0));
+        CHECK(c.sbetam == Catch::Approx(1.0));
+        CHECK(c.btsqi == Catch::Approx(1.0));
+        CHECK(c.compd.isApprox(Eigen::Vector3d(1, 0, 0)));
+        CHECK(c.arotc.isApprox(Eigen::Matrix3d::Identity()));
+        CHECK(c.ggcp.isApprox(Eigen::Matrix3d::Identity()));
+        CHECK(c.ggcpit.isApprox(Eigen::Matrix3d::Identity()));
+    }
+    SECTION("M = 0.6, alpha_c = 4 deg") {
+        const auto c = a502::Compressibility::fromAngles(0.6, 4.0, 0.0);
+        CHECK(c.betams == Catch::Approx(0.64));
+        CHECK(c.betam == Catch::Approx(0.8));
+        CHECK(c.btsqi == Catch::Approx(1.0 / 0.64));
+        const double a = 4.0 * 3.14159265358979323846 / 180.0;
+        CHECK(c.compd.isApprox(Eigen::Vector3d(std::cos(a), 0.0,
+                                                std::sin(a))));
+        CHECK((c.arotc * c.arotc.transpose() -
+               Eigen::Matrix3d::Identity()).norm() < 1e-14);
+        CHECK((c.arotci - c.arotc.transpose()).norm() < 1e-14);
+    }
+    SECTION("M = 1.2") {
+        const auto c = a502::Compressibility::fromAngles(1.2, 0.0, 0.0);
+        CHECK(c.betams == Catch::Approx(-0.44));
+        CHECK(c.abetms == Catch::Approx(0.44));
+        CHECK(c.betam == Catch::Approx(std::sqrt(0.44)));
+        CHECK(c.sbetam == Catch::Approx(-1.0));
+        CHECK(c.btsqi == Catch::Approx(1.0 / 0.44));
+    }
+    SECTION("M = 1 is rejected") {
+        REQUIRE_THROWS_AS(a502::Compressibility::fromAngles(1.0, 0.0, 0.0),
+                          std::invalid_argument);
+    }
+}
+
+TEST_CASE("refloc: scaled local frame", "[compressibility][refloc]") {
+    const Eigen::Vector3d n(0, 0, 1);
+    const Eigen::Vector3d gen(1, 0, 0);
+
+    SECTION("subsonic") {
+        const auto c = a502::Compressibility::fromAngles(0.6, 0.0, 0.0);
+        const auto f = a502::buildReflocFrame(c, n, gen);
+        REQUIRE(f.valid);
+        CHECK(f.inclination == 1);
+        CHECK((f.toLocal * f.toGlobal -
+               Eigen::Matrix3d::Identity()).norm() < 1e-12);
+        CHECK((f.toGlobal * f.toLocal -
+               Eigen::Matrix3d::Identity()).norm() < 1e-12);
+        // The subpanel plane z = 0 stays at local z = 0.
+        for (const auto& p : {Eigen::Vector3d(0, 0, 0),
+                              Eigen::Vector3d(1, 0, 0),
+                              Eigen::Vector3d(0, 1, 0),
+                              Eigen::Vector3d(2, 3, 0)}) {
+            CHECK(std::abs((f.toLocal * p).z()) < 1e-12);
+        }
+        CHECK(f.toLocal(1, 1) == Catch::Approx(c.betam));
+        CHECK(f.jacobian == Catch::Approx(c.btsqi * c.betam));
+    }
+
+    SECTION("supersonic superinclined") {
+        const auto c = a502::Compressibility::fromAngles(1.2, 0.0, 0.0);
+        const auto f = a502::buildReflocFrame(c, Eigen::Vector3d(1, 0, 0),
+                                              Eigen::Vector3d(0, 1, 0));
+        REQUIRE(f.valid);
+        CHECK(f.inclination == -1);
+        CHECK((f.toLocal * f.toGlobal -
+               Eigen::Matrix3d::Identity()).norm() < 1e-12);
+        for (const auto& p : {Eigen::Vector3d(0, 0, 0),
+                              Eigen::Vector3d(0, 1, 0),
+                              Eigen::Vector3d(0, 0, 1)}) {
+            CHECK(std::abs((f.toLocal * p).z()) < 1e-12);
+        }
+    }
+}
+
+TEST_CASE("panel scaled frames", "[compressibility][refloc]") {
+    for (const char* name : {"swb.inp", "vss.inp"}) {
+        a502::AeroModel model;
+        model.parse(samplePath(name).string());
+        REQUIRE(model.solve());
+        INFO("deck " << name << ", M=" << model.flow.mach);
+        for (const auto& pan : model.panels) {
+            for (const auto& s : pan.geom.subpanels) {
+                if (s.degenerate)
+                    continue;
+                CHECK(s.scaledValid);
+                if (!s.scaledValid)
+                    continue;
+                CHECK((s.scaledToLocal * s.scaledToGlobal -
+                       Eigen::Matrix3d::Identity()).norm() < 1e-10);
+                for (const auto& v : s.vertex) {
+                    const Eigen::Vector3d local =
+                        s.scaledToLocal * (v - s.origin);
+                    CHECK(std::abs(local.z()) < 1e-9);
+                }
             }
         }
     }

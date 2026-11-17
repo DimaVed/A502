@@ -163,6 +163,7 @@ void AeroModel::clear() {
     offBodyPoints.clear();
     sections.clear();
     networks.clear();
+    flow = Compressibility{};
     panels.clear();
     totalSurfaceArea = 0.0;
     totalPanels = 0;
@@ -895,6 +896,8 @@ bool AeroModel::solve() {
     std::size_t skipped = 0;
     solved_ = false;
 
+    flow = Compressibility::fromAngles(amach, alpc, betc);
+
     for (std::size_t netIdx = 0; netIdx < networks.size(); ++netIdx) {
         const Network& n = networks[netIdx];
         const int nm = n.nm;
@@ -920,6 +923,7 @@ bool AeroModel::solve() {
                     ++skipped;
                     continue;
                 }
+                applyCompressibleFrames(geom, flow);
 
                 Panel pan;
                 pan.geom = std::move(geom);

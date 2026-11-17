@@ -48,6 +48,14 @@ struct SubpanelGeometry {
     Eigen::Matrix3d toLocal{Eigen::Matrix3d::Identity()};
     Eigen::Matrix3d toGlobal{Eigen::Matrix3d::Identity()};
 
+    // Compressibility-scaled frame from refloc() (set by
+    // applyCompressibleFrames() once the freestream is known).
+    Eigen::Matrix3d scaledToLocal{Eigen::Matrix3d::Identity()};
+    Eigen::Matrix3d scaledToGlobal{Eigen::Matrix3d::Identity()};
+    double          jacobian{1.0};
+    int             inclination{1}; // +1 subinclined, -1 superinclined
+    bool            scaledValid{false};
+
     bool degenerate{false};
 };
 

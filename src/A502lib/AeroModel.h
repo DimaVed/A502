@@ -31,6 +31,7 @@
 
 #include <Eigen/Dense>
 
+#include "Compressibility.h"
 #include "PanelGeometry.h"
 
 namespace a502 {
@@ -143,11 +144,11 @@ public:
 
     // ----- prototype solution ---------------------------------------------
     // solve() panelizes every $points network into a flat list of Panels in
-    // i-major cell order (the same order as the quads emitted by
-    // PrintParaview, so the Cp field lines up with the cells).  It is the
+    // A502 (column-major) cell order: panel index = i + (nm-1)*j.  It is the
     // geometric precursor of the real higher-order panel solve and stamps a
     // synthetic Cp field so the result can be inspected in a visualizer.
-    std::vector<Panel>  panels;                // all cells, in i-major order
+    Compressibility     flow;                  // freestream metric, set by solve()
+    std::vector<Panel>  panels;                // all cells, in A502 order
     double              totalSurfaceArea{0.0}; // sum of panel areas
     std::size_t         totalPanels{0};        // panels.size() after solve()
 
