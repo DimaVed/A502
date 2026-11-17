@@ -8,6 +8,7 @@
 #include "AeroModel.h"
 #include "NearField.h"
 #include "PanelGeometry.h"
+#include "Pic.h"
 
 namespace a502 {
 
@@ -134,10 +135,10 @@ NetworkSingularityLayout buildNetworkSingularityLayout(
 
 namespace {
 
-NetworkInfluence evaluateNetworkNearFieldInfluenceSingle(
+NetworkInfluence evaluateNetworkInfluenceSingle(
     const Network& network, const Compressibility& flow,
     const Eigen::Vector3d& fieldPoint,
-    const NetworkSingularityLayout& layout) {
+    const NetworkSingularityLayout& layout, bool influenceDispatch) {
     NetworkInfluence out;
     const int nm = network.nm;
     const int nn = network.nn;
@@ -174,8 +175,15 @@ NetworkInfluence evaluateNetworkNearFieldInfluenceSingle(
                 continue;
             applyCompressibleFrames(panel, flow);
 
-            const PanelNearFieldInfluence pic =
-                panelNearFieldInfluence(panel, flow, fieldPoint, 6);
+            PanelNearFieldInfluence pic;
+            if (influenceDispatch) {
+                const int its =
+                    (layout.hasSource ? 1 : 0) |
+                    (layout.hasDoublet ? 2 : 0);
+                pic = panelPicInfluence(panel, flow, fieldPoint, its, 6);
+            } else {
+                pic = panelNearFieldInfluence(panel, flow, fieldPoint, 6);
+            }
             if (!pic.valid)
                 return NetworkInfluence{};
 
@@ -225,15 +233,17 @@ NetworkInfluence evaluateNetworkNearFieldInfluenceSingle(
 
 } // namespace
 
-NetworkInfluence evaluateNetworkNearFieldInfluence(
+namespace {
+
+NetworkInfluence evaluateNetworkInfluenceImpl(
     const Network& network, const Compressibility& flow,
     const Eigen::Vector3d& fieldPoint,
     const NetworkSingularityLayout& layout,
-    const SymmetryOptions& symmetry) {
+    const SymmetryOptions& symmetry, bool influenceDispatch) {
     NetworkInfluence out;
     if (symmetry.misym == 0 && symmetry.mjsym == 0)
-        return evaluateNetworkNearFieldInfluenceSingle(
-            network, flow, fieldPoint, layout);
+        return evaluateNetworkInfluenceSingle(
+            network, flow, fieldPoint, layout, influenceDispatch);
 
     const int nImagesI = (symmetry.misym != 0) ? 2 : 1;
     const int nImagesJ = (symmetry.mjsym != 0) ? 2 : 1;
@@ -256,8 +266,8 @@ NetworkInfluence evaluateNetworkNearFieldInfluence(
                 fieldPoint.x(), sgni * fieldPoint.y(),
                 sgnj * fieldPoint.z());
             const NetworkInfluence row =
-                evaluateNetworkNearFieldInfluenceSingle(
-                    network, flow, imagePoint, layout);
+                evaluateNetworkInfluenceSingle(
+                    network, flow, imagePoint, layout, influenceDispatch);
             if (!row.valid)
                 return NetworkInfluence{};
 
@@ -276,11 +286,11 @@ NetworkInfluence evaluateNetworkNearFieldInfluence(
     return out;
 }
 
-NetworkAic buildNetworkNearFieldAic(
+NetworkAic buildNetworkAicImpl(
     const Network& network, const Compressibility& flow,
     const NetworkSingularityLayout& layout,
     const std::vector<Eigen::Vector3d>& fieldPoints,
-    const SymmetryOptions& symmetry) {
+    const SymmetryOptions& symmetry, bool influenceDispatch) {
     NetworkAic out;
     if (fieldPoints.empty())
         return out;
@@ -292,9 +302,9 @@ NetworkAic buildNetworkNearFieldAic(
     out.doublet = Eigen::MatrixXd::Zero(4 * out.nControlPoints, out.nDoublet);
 
     for (int k = 0; k < out.nControlPoints; ++k) {
-        const NetworkInfluence row = evaluateNetworkNearFieldInfluence(
+        const NetworkInfluence row = evaluateNetworkInfluenceImpl(
             network, flow, fieldPoints[static_cast<std::size_t>(k)],
-            layout, symmetry);
+            layout, symmetry, influenceDispatch);
         if (!row.valid)
             return NetworkAic{};
 
@@ -304,6 +314,44 @@ NetworkAic buildNetworkNearFieldAic(
 
     out.valid = true;
     return out;
+}
+
+} // namespace
+
+NetworkInfluence evaluateNetworkNearFieldInfluence(
+    const Network& network, const Compressibility& flow,
+    const Eigen::Vector3d& fieldPoint,
+    const NetworkSingularityLayout& layout,
+    const SymmetryOptions& symmetry) {
+    return evaluateNetworkInfluenceImpl(network, flow, fieldPoint, layout,
+                                        symmetry, false);
+}
+
+NetworkInfluence evaluateNetworkPicInfluence(
+    const Network& network, const Compressibility& flow,
+    const Eigen::Vector3d& fieldPoint,
+    const NetworkSingularityLayout& layout,
+    const SymmetryOptions& symmetry) {
+    return evaluateNetworkInfluenceImpl(network, flow, fieldPoint, layout,
+                                        symmetry, true);
+}
+
+NetworkAic buildNetworkNearFieldAic(
+    const Network& network, const Compressibility& flow,
+    const NetworkSingularityLayout& layout,
+    const std::vector<Eigen::Vector3d>& fieldPoints,
+    const SymmetryOptions& symmetry) {
+    return buildNetworkAicImpl(network, flow, layout, fieldPoints, symmetry,
+                               false);
+}
+
+NetworkAic buildNetworkPicAic(
+    const Network& network, const Compressibility& flow,
+    const NetworkSingularityLayout& layout,
+    const std::vector<Eigen::Vector3d>& fieldPoints,
+    const SymmetryOptions& symmetry) {
+    return buildNetworkAicImpl(network, flow, layout, fieldPoints, symmetry,
+                               true);
 }
 
 } // namespace a502

@@ -101,10 +101,11 @@
 - PIC не завершён:
   - far-field `ffpic` портирован для `nf=6`; кубические члены
     (`nf=10`, `ffdqg` cubic basis) не проверены и не подключены;
-  - диспетчер `panelPicInfluence` готов, но сетевая/глобальная сборка
-    (`evaluateNetworkNearFieldInfluence`, `buildGlobalNearFieldAic`)
-    по-прежнему всегда использует near-field;
+  - глобальная сборка AIC и поверхностные скорости используют
+    `panelPicInfluence`; явный near-field API сохранён для BC-членов и
+    тестов;
   - нет полного `qnfcal`: уровень 5 (two-subpanel) падает в near-field;
+  - нет `lffld`-исключения far-field для последнего ряда wake-сетей;
   - supersonic near-field (`supsbi` и `supspi`/`aicsup`) портирован и
     проверен численным интегрированием ядра; far-field для
     сверхзвуковых суперinclined-панелей не проверялся.
@@ -182,9 +183,8 @@
    - `supsbi` — готово;
    - `supspi`/`aicsup` — готово;
    - `nftpic` dispatch по `iin` — готово.
-4. Диспетчеризация по `influenceLevel` вместо near-field везде:
-   панельный уровень готов, осталось подключить сетевую/глобальную
-   сборку.
+4. Диспетчеризация по `influenceLevel` вместо near-field везде —
+   сделано для глобальной AIC-сборки и поверхностных скоростей.
 5. Сравнение far/intermediate/near на одних и тех же точках.
 
 ### Этап 5. Постпроцессинг и интеграция
@@ -232,8 +232,11 @@
 - [x] Добавить панельную диспетчеризацию PIC по `influenceLevel`
   (`panelPicInfluence`: 1..3 — far-field, 4 — `qffcal`, 5/6 — near-field).
   Покрыто тестами на все уровни, `its=1/2/3`, level 0 и авто-выбор.
-- [ ] Подключить `panelPicInfluence` к `evaluateNetworkNearFieldInfluence`
-  и глобальной сборке AIC, не меняя явный near-field API для BC/тестов.
+- [x] Подключить `panelPicInfluence` к сетевой и глобальной сборке AIC.
+  Добавлены `evaluateNetworkPicInfluence`/`buildNetworkPicAic` и
+  `evaluateGlobalPicInfluence`/`buildGlobalPicAic`; явный near-field API
+  сохранён для BC-членов и тестов. Покрыто тестами на near/far точки,
+  постоянные распределения и глобальные смещения колонок.
 - [ ] Кубический far-field (`nf=10`, cubic terms в `ffpic`/`ffdqg`).
 - [ ] Портировать полный `qnfcal`.
 - [x] Портировать `supsbi` и диспетчеризацию `nftpic` по `iin`

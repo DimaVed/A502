@@ -50,11 +50,13 @@ GlobalSingularityLayout buildGlobalSingularityLayout(
     return out;
 }
 
-GlobalInfluence evaluateGlobalNearFieldInfluence(
+namespace {
+
+GlobalInfluence evaluateGlobalInfluenceImpl(
     const std::vector<Network>& networks, const Compressibility& flow,
     const Eigen::Vector3d& fieldPoint,
     const GlobalSingularityLayout& layout,
-    const SymmetryOptions& symmetry) {
+    const SymmetryOptions& symmetry, bool influenceDispatch) {
     GlobalInfluence out;
     if (networks.empty() || layout.network.size() != networks.size() ||
         layout.sourceOffset.size() != networks.size() ||
@@ -67,8 +69,14 @@ GlobalInfluence evaluateGlobalNearFieldInfluence(
         4, layout.totalDoublet);
 
     for (std::size_t k = 0; k < networks.size(); ++k) {
-        const NetworkInfluence row = evaluateNetworkNearFieldInfluence(
-            networks[k], flow, fieldPoint, layout.network[k], symmetry);
+        const NetworkInfluence row =
+            influenceDispatch
+                ? evaluateNetworkPicInfluence(
+                      networks[k], flow, fieldPoint, layout.network[k],
+                      symmetry)
+                : evaluateNetworkNearFieldInfluence(
+                      networks[k], flow, fieldPoint, layout.network[k],
+                      symmetry);
         if (!row.valid)
             return GlobalInfluence{};
 
@@ -86,11 +94,11 @@ GlobalInfluence evaluateGlobalNearFieldInfluence(
     return out;
 }
 
-GlobalAic buildGlobalNearFieldAic(
+GlobalAic buildGlobalAicImpl(
     const std::vector<Network>& networks, const Compressibility& flow,
     const GlobalSingularityLayout& layout,
     const std::vector<Eigen::Vector3d>& fieldPoints,
-    const SymmetryOptions& symmetry) {
+    const SymmetryOptions& symmetry, bool influenceDispatch) {
     GlobalAic out;
     if (fieldPoints.empty() ||
         (layout.activeSource <= 0 && layout.activeDoublet <= 0))
@@ -103,9 +111,9 @@ GlobalAic buildGlobalNearFieldAic(
     out.doublet = Eigen::MatrixXd::Zero(4 * out.nControlPoints, out.nDoublet);
 
     for (int k = 0; k < out.nControlPoints; ++k) {
-        const GlobalInfluence row = evaluateGlobalNearFieldInfluence(
+        const GlobalInfluence row = evaluateGlobalInfluenceImpl(
             networks, flow, fieldPoints[static_cast<std::size_t>(k)],
-            layout, symmetry);
+            layout, symmetry, influenceDispatch);
         if (!row.valid)
             return GlobalAic{};
 
@@ -115,6 +123,44 @@ GlobalAic buildGlobalNearFieldAic(
 
     out.valid = true;
     return out;
+}
+
+} // namespace
+
+GlobalInfluence evaluateGlobalNearFieldInfluence(
+    const std::vector<Network>& networks, const Compressibility& flow,
+    const Eigen::Vector3d& fieldPoint,
+    const GlobalSingularityLayout& layout,
+    const SymmetryOptions& symmetry) {
+    return evaluateGlobalInfluenceImpl(networks, flow, fieldPoint, layout,
+                                       symmetry, false);
+}
+
+GlobalInfluence evaluateGlobalPicInfluence(
+    const std::vector<Network>& networks, const Compressibility& flow,
+    const Eigen::Vector3d& fieldPoint,
+    const GlobalSingularityLayout& layout,
+    const SymmetryOptions& symmetry) {
+    return evaluateGlobalInfluenceImpl(networks, flow, fieldPoint, layout,
+                                       symmetry, true);
+}
+
+GlobalAic buildGlobalNearFieldAic(
+    const std::vector<Network>& networks, const Compressibility& flow,
+    const GlobalSingularityLayout& layout,
+    const std::vector<Eigen::Vector3d>& fieldPoints,
+    const SymmetryOptions& symmetry) {
+    return buildGlobalAicImpl(networks, flow, layout, fieldPoints, symmetry,
+                              false);
+}
+
+GlobalAic buildGlobalPicAic(
+    const std::vector<Network>& networks, const Compressibility& flow,
+    const GlobalSingularityLayout& layout,
+    const std::vector<Eigen::Vector3d>& fieldPoints,
+    const SymmetryOptions& symmetry) {
+    return buildGlobalAicImpl(networks, flow, layout, fieldPoints, symmetry,
+                              true);
 }
 
 } // namespace a502

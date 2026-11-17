@@ -107,6 +107,16 @@ NetworkInfluence evaluateNetworkNearFieldInfluence(
     const NetworkSingularityLayout& layout,
     const SymmetryOptions& symmetry = {});
 
+// Same assembly with the panel PIC method selected by influ() for every
+// (field point, panel) pair: far field, one-subpanel intermediate field, or
+// near field.  The near-field function above remains available for explicit
+// near-field evaluations (boundary-condition terms and tests).
+NetworkInfluence evaluateNetworkPicInfluence(
+    const Network& network, const Compressibility& flow,
+    const Eigen::Vector3d& fieldPoint,
+    const NetworkSingularityLayout& layout,
+    const SymmetryOptions& symmetry = {});
+
 // Raw AIC rows at a list of field points, four rows per point (potential,
 // global vx,vy,vz).  Boundary conditions select/combine these rows later.
 struct NetworkAic {
@@ -119,6 +129,12 @@ struct NetworkAic {
 };
 
 NetworkAic buildNetworkNearFieldAic(
+    const Network& network, const Compressibility& flow,
+    const NetworkSingularityLayout& layout,
+    const std::vector<Eigen::Vector3d>& fieldPoints,
+    const SymmetryOptions& symmetry = {});
+
+NetworkAic buildNetworkPicAic(
     const Network& network, const Compressibility& flow,
     const NetworkSingularityLayout& layout,
     const std::vector<Eigen::Vector3d>& fieldPoints,

@@ -4790,3 +4790,107 @@ TEST_CASE("PIC dispatch: influence level selects the PIC method",
     CHECK_FALSE(a502::panelPicInfluence(panel, flow, farPoint, 0, 6, 6)
                     .valid);
 }
+
+TEST_CASE("network PIC: level dispatch in the global assembly",
+          "[networkinfluence][pic]") {
+    a502::Network net;
+    net.netname = "grid";
+    net.nm = 8;
+    net.nn = 8;
+    for (int n = 0; n < 8; ++n) {
+        for (int m = 0; m < 8; ++m) {
+            net.coordinates.push_back(static_cast<double>(m));
+            net.coordinates.push_back(static_cast<double>(n));
+            net.coordinates.push_back(0.0);
+        }
+    }
+    const auto flow = a502::Compressibility::fromAngles(0.0, 0.0, 0.0);
+    const auto layout = a502::buildNetworkSingularityLayout(net);
+
+    // A point just above a single-panel network must stay in the eight-
+    // subpanel near field, so the dispatched row is identical.
+    a502::Network single;
+    single.netname = "single";
+    single.nm = 3;
+    single.nn = 3;
+    for (int n = 0; n < 3; ++n)
+        for (int m = 0; m < 3; ++m) {
+            single.coordinates.push_back(static_cast<double>(m));
+            single.coordinates.push_back(static_cast<double>(n));
+            single.coordinates.push_back(0.0);
+        }
+    const auto singleLayout = a502::buildNetworkSingularityLayout(single);
+    const Eigen::Vector3d nearPoint(1.0, 1.0, 0.05);
+    const auto nearNear = a502::evaluateNetworkNearFieldInfluence(
+        single, flow, nearPoint, singleLayout);
+    const auto nearPic = a502::evaluateNetworkPicInfluence(
+        single, flow, nearPoint, singleLayout);
+    REQUIRE(nearNear.valid);
+    REQUIRE(nearPic.valid);
+    CHECK((nearPic.source - nearNear.source).norm() < 1e-12);
+    CHECK((nearPic.doublet - nearNear.doublet).norm() < 1e-12);
+
+    // Far away the panels switch to the multipole far field.  Constant
+    // source and doublet distributions must still reproduce the near-field
+    // potential and velocity to the far-field truncation error.
+    const Eigen::Vector3d farPoint(3.5, 3.5, 100.0);
+    const auto farNear = a502::evaluateNetworkNearFieldInfluence(
+        net, flow, farPoint, layout);
+    const auto farPic = a502::evaluateNetworkPicInfluence(
+        net, flow, farPoint, layout);
+    REQUIRE(farNear.valid);
+    REQUIRE(farPic.valid);
+
+    const Eigen::VectorXd sourceValues =
+        Eigen::VectorXd::Ones(layout.source.count);
+    const Eigen::VectorXd doubletValues =
+        Eigen::VectorXd::Ones(layout.doublet.count);
+    const Eigen::VectorXd nearSourceHit = farNear.source * sourceValues;
+    const Eigen::VectorXd picSourceHit = farPic.source * sourceValues;
+    const Eigen::VectorXd nearDoubletHit = farNear.doublet * doubletValues;
+    const Eigen::VectorXd picDoubletHit = farPic.doublet * doubletValues;
+
+    CHECK((picSourceHit - nearSourceHit).norm() / nearSourceHit.norm() <
+          1e-3);
+    CHECK((picDoubletHit - nearDoubletHit).norm() / nearDoubletHit.norm() <
+          1e-3);
+    // The two methods must not be accidentally identical at this distance.
+    CHECK((farPic.source - farNear.source).norm() > 1e-12);
+
+    // Global assembly: the dispatched row matches the per-network rows at
+    // their global column offsets.
+    const std::vector<a502::Network> networks = {net};
+    const auto globalLayout = a502::buildGlobalSingularityLayout(networks);
+    REQUIRE(globalLayout.totalSource == layout.source.count);
+    REQUIRE(globalLayout.totalDoublet == layout.doublet.count);
+    const auto globalPic = a502::evaluateGlobalPicInfluence(
+        networks, flow, farPoint, globalLayout);
+    REQUIRE(globalPic.valid);
+    const auto networkPic = a502::evaluateNetworkPicInfluence(
+        net, flow, farPoint, globalLayout.network[0]);
+    REQUIRE(networkPic.valid);
+    CHECK((globalPic.source - networkPic.source).norm() < 1e-12);
+    CHECK((globalPic.doublet - networkPic.doublet).norm() < 1e-12);
+
+    const auto globalNear = a502::evaluateGlobalNearFieldInfluence(
+        networks, flow, farPoint, globalLayout);
+    REQUIRE(globalNear.valid);
+    CHECK((globalPic.source - globalNear.source).norm() > 1e-12);
+
+    const std::vector<Eigen::Vector3d> points = {nearPoint, farPoint};
+    const auto aic = a502::buildGlobalPicAic(
+        networks, flow, globalLayout, points);
+    REQUIRE(aic.valid);
+    for (int k = 0; k < 2; ++k) {
+        const auto row = a502::evaluateGlobalPicInfluence(
+            networks, flow, points[static_cast<std::size_t>(k)],
+            globalLayout);
+        REQUIRE(row.valid);
+        CHECK((aic.source.block(4 * k, 0, 4, aic.nSource) - row.source)
+                  .norm() <
+              1e-12);
+        CHECK((aic.doublet.block(4 * k, 0, 4, aic.nDoublet) - row.doublet)
+                  .norm() <
+              1e-12);
+    }
+}

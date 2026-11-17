@@ -56,7 +56,7 @@ GlobalBoundarySystem buildGlobalNormalFluxSystemImpl(
                 continue;
 
             const GlobalInfluence global =
-                evaluateGlobalNearFieldInfluence(
+                evaluateGlobalPicInfluence(
                     networks, flow, cp.position, layout, symmetry);
             if (!global.valid)
                 return GlobalBoundarySystem{};

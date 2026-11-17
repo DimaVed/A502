@@ -115,7 +115,7 @@ SurfaceFlowResult evaluateSurfaceFlow(
         return out;
 
     const auto globalAic =
-        buildGlobalNearFieldAic(networks, flow, layout, points, symmetry);
+        buildGlobalPicAic(networks, flow, layout, points, symmetry);
     if (!globalAic.valid)
         return SurfaceFlowResult{};
 
