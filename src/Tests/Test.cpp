@@ -10,6 +10,7 @@
 #include "AeroModel.h"
 #include "Compressibility.h"
 #include "Influence.h"
+#include "NearField.h"
 #include "PanelGeometry.h"
 #include "PanelParameters.h"
 #include "OuterSplines.h"
@@ -434,6 +435,152 @@ TEST_CASE("influence: compressible panel diameter and PIC level",
           Catch::Approx(2.0 * std::sqrt(0.41)).epsilon(1e-12));
     CHECK(a502::influenceLevel(panel, m06, atHeight(0.1)) == 6);
     CHECK(a502::influenceLevel(panel, m06, atHeight(100.0)) == 1);
+}
+
+TEST_CASE("subsonic near-field influence: constant source and doublet",
+          "[nearfield]") {
+    const std::array<Eigen::Vector3d, 4> p = {
+        Eigen::Vector3d(0.0, 0.0, 0.0),
+        Eigen::Vector3d(1.0, 0.0, 0.0),
+        Eigen::Vector3d(1.0, 1.0, 0.0),
+        Eigen::Vector3d(0.0, 1.0, 0.0)};
+    const Eigen::Vector3d x(0.5, 0.5, 1.0);
+    const auto infl =
+        a502::subsonicSubpanelInfluence(p, 4, 0, 3, x, 1.0, 6);
+    REQUIRE(infl.valid);
+
+    // 8-point Gauss-Legendre quadrature on the unit square.
+    constexpr double nodes[8] = {
+        -0.9602898564975363, -0.7966664774136267,
+        -0.5255324099163290, -0.1834346424956498,
+         0.1834346424956498,  0.5255324099163290,
+         0.7966664774136267,  0.9602898564975363};
+    constexpr double weights[8] = {
+        0.1012285362903763, 0.2223810344533745,
+        0.3137066458778873, 0.3626837833783620,
+        0.3626837833783620, 0.3137066458778873,
+        0.2223810344533745, 0.1012285362903763};
+    constexpr double pi = 3.14159265358979323846;
+    const double fourPi = 4.0 * pi;
+
+    double sourcePotential = 0.0;
+    double sourceVz = 0.0;
+    double doubletPotential = 0.0;
+    double doubletX3 = 0.0;
+
+    for (int j = 0; j < 8; ++j) {
+        for (int i = 0; i < 8; ++i) {
+            const double xp = 0.5 * (1.0 + nodes[i]);
+            const double yp = 0.5 * (1.0 + nodes[j]);
+            const double w = 0.25 * weights[i] * weights[j];
+            const double rx = x.x() - xp;
+            const double ry = x.y() - yp;
+            const double rz = x.z();
+            const double r2 = rx * rx + ry * ry + rz * rz;
+            const double r = std::sqrt(r2);
+            sourcePotential += w / (fourPi * r);
+            sourceVz += w * (-rz) / (fourPi * r2 * r);
+            doubletPotential += w * rz / (fourPi * r2 * r);
+            doubletX3 += w * (xp * xp * xp / 6.0) * rz /
+                         (fourPi * r2 * r);
+        }
+    }
+
+    // PAN AIR's source potential is minus the 1/(4*pi*r) sheet integral.
+    CHECK(infl.source(0, 0) ==
+          Catch::Approx(-sourcePotential).epsilon(1e-9));
+    CHECK(infl.source(1, 0) == 0.0);
+    CHECK(infl.source(2, 0) == 0.0);
+    CHECK(infl.source(3, 0) == Catch::Approx(-sourceVz).epsilon(1e-9));
+    CHECK(infl.doublet(0, 0) ==
+          Catch::Approx(doubletPotential).epsilon(1e-9));
+    // subsbi returns no velocity influence for the constant doublet term;
+    // its derivative is represented through the source-like terms.
+    CHECK(infl.doublet(3, 0) == 0.0);
+
+    // Cubic terms: the lower-order coefficients must agree with the
+    // quadratic fit, and the x^3/6 coefficients match direct quadrature.
+    const auto infl10 =
+        a502::subsonicSubpanelInfluence(p, 4, 0, 3, x, 1.0, 10);
+    REQUIRE(infl10.valid);
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            CHECK(infl10.source(i, j) ==
+                  Catch::Approx(infl.source(i, j)).epsilon(1e-9));
+        }
+        for (int j = 0; j < 6; ++j) {
+            CHECK(infl10.doublet(i, j) ==
+                  Catch::Approx(infl.doublet(i, j)).epsilon(1e-9));
+        }
+    }
+    CHECK(infl10.doublet(0, 6) ==
+          Catch::Approx(doubletX3).epsilon(1e-8));
+
+    // The source-only and doublet-only modes leave the other block zero.
+    const auto sourceOnly =
+        a502::subsonicSubpanelInfluence(p, 4, 0, 1, x, 1.0, 6);
+    REQUIRE(sourceOnly.valid);
+    CHECK(sourceOnly.doublet.isZero(0.0));
+    const auto doubletOnly =
+        a502::subsonicSubpanelInfluence(p, 4, 0, 2, x, 1.0, 6);
+    REQUIRE(doubletOnly.valid);
+    CHECK(doubletOnly.doublet(0, 0) ==
+          Catch::Approx(doubletPotential).epsilon(1e-9));
+}
+
+TEST_CASE("subsonic near-field influence: triangular subpanel",
+          "[nearfield]") {
+    const std::array<Eigen::Vector3d, 4> p = {
+        Eigen::Vector3d(0.0, 0.0, 0.0),
+        Eigen::Vector3d(1.0, 0.0, 0.0),
+        Eigen::Vector3d(0.0, 1.0, 0.0),
+        Eigen::Vector3d(0.0, 0.0, 0.0)};
+    const Eigen::Vector3d x(1.0 / 3.0, 1.0 / 3.0, 1.0);
+    const auto infl =
+        a502::subsonicSubpanelInfluence(p, 3, 0, 3, x, 1.0, 6);
+    REQUIRE(infl.valid);
+
+    constexpr double nodes[8] = {
+        -0.9602898564975363, -0.7966664774136267,
+        -0.5255324099163290, -0.1834346424956498,
+         0.1834346424956498,  0.5255324099163290,
+         0.7966664774136267,  0.9602898564975363};
+    constexpr double weights[8] = {
+        0.1012285362903763, 0.2223810344533745,
+        0.3137066458778873, 0.3626837833783620,
+        0.3626837833783620, 0.3137066458778873,
+        0.2223810344533745, 0.1012285362903763};
+    constexpr double pi = 3.14159265358979323846;
+    const double fourPi = 4.0 * pi;
+
+    double sourcePotential = 0.0;
+    double sourceVz = 0.0;
+    double doubletPotential = 0.0;
+    for (int j = 0; j < 8; ++j) {
+        for (int i = 0; i < 8; ++i) {
+            const double u = 0.5 * (1.0 + nodes[i]);
+            const double v = 0.5 * (1.0 + nodes[j]);
+            const double xp = u;
+            const double yp = v * (1.0 - u);
+            const double jac = 1.0 - u;
+            const double w = 0.25 * weights[i] * weights[j] * jac;
+            const double rx = x.x() - xp;
+            const double ry = x.y() - yp;
+            const double rz = x.z();
+            const double r2 = rx * rx + ry * ry + rz * rz;
+            const double r = std::sqrt(r2);
+            sourcePotential += w / (fourPi * r);
+            sourceVz += w * (-rz) / (fourPi * r2 * r);
+            doubletPotential += w * rz / (fourPi * r2 * r);
+        }
+    }
+
+    CHECK(infl.source(0, 0) ==
+          Catch::Approx(-sourcePotential).epsilon(1e-9));
+    CHECK(infl.source(3, 0) ==
+          Catch::Approx(-sourceVz).epsilon(1e-8));
+    CHECK(infl.doublet(0, 0) ==
+          Catch::Approx(doubletPotential).epsilon(1e-8));
 }
 
 TEST_CASE("control points: single square network", "[controlpoints]") {
