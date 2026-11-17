@@ -11,6 +11,7 @@
 #include "Compressibility.h"
 #include "PanelGeometry.h"
 #include "SubpanelSplines.h"
+#include "TriangleInterpolation.h"
 
 #include <algorithm>
 #include <cmath>
@@ -591,4 +592,113 @@ TEST_CASE("source subpanel splines: sample panel", "[splines][source]") {
                       .epsilon(1e-10));
         }
     }
+}
+
+TEST_CASE("biquadratic basis functions", "[splines][bqbfun]") {
+    struct Pt { int index; double s; double t; };
+    const Pt pts[9] = {{0, 1, 1},  {1, -1, 1},  {2, -1, -1},
+                       {3, 1, -1}, {4, 0, 1},   {5, -1, 0},
+                       {6, 0, -1}, {7, 1, 0},   {8, 0, 0}};
+
+    for (const auto& pt : pts) {
+        const auto b = a502::bqbfun(pt.s, pt.t);
+        INFO("P" << (pt.index + 1) << " at (" << pt.s << "," << pt.t << ")");
+        for (int i = 0; i < 9; ++i) {
+            if (i == pt.index)
+                CHECK(b.phi(i) == Catch::Approx(1.0).epsilon(1e-14));
+            else
+                CHECK(std::abs(b.phi(i)) < 1e-14);
+        }
+        CHECK(b.phi.sum() == Catch::Approx(1.0).epsilon(1e-14));
+        CHECK(std::abs(b.phis.sum()) < 1e-12);
+        CHECK(std::abs(b.phit.sum()) < 1e-12);
+    }
+}
+
+TEST_CASE("triangle interpolation: linear map", "[splines][tcof]") {
+    Eigen::Matrix3d p;
+    p << 0.0, 1.0, 0.0,
+         0.0, 0.0, 1.0,
+         0.0, 0.0, 0.0; // unused third row
+
+    const auto map = a502::buildLinearTriangleMap(p);
+    REQUIRE(map.valid);
+
+    Eigen::Vector3d values(1.0, 5.0, 7.0);
+    const Eigen::Vector3d c = map.b * values;
+    CHECK(c(0) == Catch::Approx(1.0).epsilon(1e-14));
+    CHECK(c(1) == Catch::Approx(4.0).epsilon(1e-14));
+    CHECK(c(2) == Catch::Approx(6.0).epsilon(1e-14));
+}
+
+TEST_CASE("triangle interpolation: quadratic map", "[splines][tcof]") {
+    Eigen::Matrix3d p;
+    p << 0.0, 1.0, 0.0,
+         0.0, 0.0, 1.0,
+         0.0, 0.0, 0.0;
+
+    const auto map = a502::buildQuadraticTriangleMap(p);
+    REQUIRE(map.valid);
+
+    auto f = [](double x, double y) {
+        return 1.0 + 2.0 * x + 3.0 * y + 4.0 * x * x / 2.0 +
+               5.0 * x * y + 6.0 * y * y / 2.0;
+    };
+
+    const double v0 = f(0.0, 0.0);
+    const double v1 = f(1.0, 0.0);
+    const double v2 = f(0.0, 1.0);
+    const double m12 = f(0.5, 0.5);
+    const double m20 = f(0.0, 0.5);
+    const double m01 = f(0.5, 0.0);
+    const double l1 = 2.0 * m12 - 0.5 * (v1 + v2);
+    const double l2 = 2.0 * m20 - 0.5 * (v2 + v0);
+    const double l3 = 2.0 * m01 - 0.5 * (v0 + v1);
+
+    Eigen::Matrix<double, 6, 1> rhs;
+    rhs << v0, v1, v2, l1, l2, l3;
+    const Eigen::Matrix<double, 6, 1> c = map.c * rhs;
+    const Eigen::Matrix<double, 6, 1> want =
+        (Eigen::Matrix<double, 6, 1>() << 1, 2, 3, 4, 5, 6).finished();
+    CHECK((c - want).norm() < 1e-12);
+
+    const double x = 0.25;
+    const double y = 0.75;
+    const double evaluated = c(0) + c(1) * x + c(2) * y +
+                             c(3) * x * x / 2.0 + c(4) * x * y +
+                             c(5) * y * y / 2.0;
+    CHECK(evaluated == Catch::Approx(f(x, y)).epsilon(1e-12));
+
+    // A non-right triangle exercises the general inverse.
+    Eigen::Matrix3d q;
+    q << 0.0, 1.0, 0.3,
+         0.0, 0.0, 0.8,
+         0.0, 0.0, 0.0;
+    const auto map2 = a502::buildQuadraticTriangleMap(q);
+    REQUIRE(map2.valid);
+
+    auto f2 = [](double x, double y) {
+        return -2.0 + 0.5 * x - 1.5 * y + 2.0 * x * x / 2.0 -
+               3.0 * x * y + 4.0 * y * y / 2.0;
+    };
+    const double w0 = f2(q(0, 0), q(1, 0));
+    const double w1 = f2(q(0, 1), q(1, 1));
+    const double w2 = f2(q(0, 2), q(1, 2));
+    const auto mid = [&](int a, int b) -> Eigen::Vector2d {
+        return 0.5 * (Eigen::Vector2d(q(0, a), q(1, a)) +
+                      Eigen::Vector2d(q(0, b), q(1, b)));
+    };
+    const double n12 = f2(mid(1, 2).x(), mid(1, 2).y());
+    const double n20 = f2(mid(2, 0).x(), mid(2, 0).y());
+    const double n01 = f2(mid(0, 1).x(), mid(0, 1).y());
+    Eigen::Matrix<double, 6, 1> rhs2;
+    rhs2 << w0, w1, w2,
+        2.0 * n12 - 0.5 * (w1 + w2),
+        2.0 * n20 - 0.5 * (w2 + w0),
+        2.0 * n01 - 0.5 * (w0 + w1);
+    const Eigen::Matrix<double, 6, 1> c2 = map2.c * rhs2;
+    const Eigen::Matrix<double, 6, 1> want2 =
+        (Eigen::Matrix<double, 6, 1>() << -2.0, 0.5, -1.5, 2.0, -3.0, 4.0)
+            .finished();
+    CHECK((c2 - want2).norm() < 1e-12);
 }
